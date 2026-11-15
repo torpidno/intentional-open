@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [InterventionLogEntity::class],
     version = 2,
-    exportSchema = false,
+    exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class PauseDatabase : RoomDatabase() {

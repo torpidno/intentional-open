@@ -152,6 +152,8 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
 - `PauseDatabaseMigrationTest` — creates a real v1 SQLite database, runs the
   1→2 migration, and verifies old history survives while the sequence column
   becomes available.
+- Room exports the v2 schema to `app/schemas/`; it is committed as the baseline
+  for future migrations and drift checks.
 
 The Robolectric test downloads an Android runtime jar on its first run.
 
@@ -203,6 +205,8 @@ app/src/main/java/com/pause/app/
 ├── util/               Permission checks, settings intents, time source
 ├── MainActivity.kt
 └── PauseApplication.kt
+
+app/schemas/            Exported Room schemas (v2 baseline)
 
 app/src/test/java/com/pause/app/
 ├── data/               Robolectric + in-memory Room stats tests

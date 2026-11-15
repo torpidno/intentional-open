@@ -1,0 +1,101 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "a3f5f5cb033ec2b65b96262bf8bd72c0",
+    "entities": [
+      {
+        "tableName": "intervention_logs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `packageName` TEXT NOT NULL, `appLabel` TEXT NOT NULL, `timestampMillis` INTEGER NOT NULL, `outcome` TEXT NOT NULL, `frictionMode` TEXT NOT NULL, `frictionModeSequence` TEXT, `intention` TEXT, `sessionLimitMinutes` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "packageName",
+            "columnName": "packageName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appLabel",
+            "columnName": "appLabel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMillis",
+            "columnName": "timestampMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outcome",
+            "columnName": "outcome",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frictionMode",
+            "columnName": "frictionMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frictionModeSequence",
+            "columnName": "frictionModeSequence",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "intention",
+            "columnName": "intention",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sessionLimitMinutes",
+            "columnName": "sessionLimitMinutes",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_intervention_logs_timestampMillis",
+            "unique": false,
+            "columnNames": [
+              "timestampMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_intervention_logs_timestampMillis` ON `${TABLE_NAME}` (`timestampMillis`)"
+          },
+          {
+            "name": "index_intervention_logs_packageName",
+            "unique": false,
+            "columnNames": [
+              "packageName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_intervention_logs_packageName` ON `${TABLE_NAME}` (`packageName`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a3f5f5cb033ec2b65b96262bf8bd72c0')"
+    ]
+  }
+}

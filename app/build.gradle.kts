@@ -88,12 +88,23 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    sourceSets {
+        // Keep exported schemas available to future MigrationTestHelper checks.
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
 }
 
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
+}
+
+ksp {
+    // Commit the generated v2 schema so future migrations have a stable
+    // baseline and Room can fail on accidental schema drift.
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
