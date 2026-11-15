@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window backgrounds used before Compose draws its first frame. -->
+    <color name="pause_window_background">#F6F3EC</color>
+    <color name="pause_window_background_dark">#10130F</color>
+    <color name="pause_intervention_background">#10130F</color>
+
+    <!-- Adaptive launcher icon background. -->
+    <color name="ic_launcher_background">#1F5E46</color>
+</resources>

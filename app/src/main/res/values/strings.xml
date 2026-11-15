@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pause</string>
+
+    <!-- Accessibility service -->
+    <string name="accessibility_service_label">Pause app opener</string>
+    <string name="accessibility_service_summary">Notices when a monitored app opens</string>
+    <string name="accessibility_service_description">Pause adds a short, private pause before the apps you choose can open.\n\nIt only listens for window changes so it can tell which app came to the foreground. It never reads what is on your screen, never records typing, and has no internet permission. Everything stays on this device.</string>
+
+    <!-- Home -->
+    <string name="home_tagline">A moment before the scroll</string>
+    <string name="home_status_active_title">Pause is active</string>
+    <string name="home_status_paused_title">Pause is off</string>
+    <plurals name="home_status_active_body">
+        <item quantity="one">%1$d app is watched. You\'ll get a breath before it opens.</item>
+        <item quantity="other">%1$d apps are watched. You\'ll get a breath before they open.</item>
+    </plurals>
+    <string name="home_status_paused_body">Apps open normally. Turn Pause on when you\'re ready to be intentional.</string>
+    <string name="home_permission_title">Finish setting up</string>
+    <string name="home_permission_body">%1$d of %2$d permissions granted. Pause needs all three to reliably step in.</string>
+    <string name="home_permission_action">Review</string>
+    <string name="home_stats_title">Today</string>
+    <string name="home_stat_attempts">Intercepted</string>
+    <string name="home_stat_walked_away">Walked away</string>
+    <string name="home_most_triggered">Most triggered</string>
+    <string name="home_most_triggered_none">Nothing yet</string>
+    <plurals name="home_most_triggered_count">
+        <item quantity="one">%1$d time today</item>
+        <item quantity="other">%1$d times today</item>
+    </plurals>
+    <string name="home_monitored_title">Monitored apps</string>
+    <string name="home_add_apps">Add apps</string>
+    <string name="home_empty_title">No apps monitored</string>
+    <string name="home_empty_body">Choose the apps that tend to pull you in. Pause will meet you there.</string>
+    <string name="home_empty_action">Choose apps</string>
+    <string name="privacy_footer">Pause has no internet permission. Your settings and history stay on this device.</string>
+    <string name="app_mode_default">Default · %1$s</string>
+    <string name="app_mode_menu_default">Use global default (%1$s)</string>
+    <string name="cd_open_settings">Open settings</string>
+    <string name="cd_pause_switch">Pause interception</string>
+    <string name="cd_app_pause_switch">Pause before opening %1$s</string>
+    <string name="cd_back">Back</string>
+
+    <!-- Friction modes -->
+    <string name="mode_breathing">Breathing pause</string>
+    <string name="mode_breathing_description">A slow countdown before the app opens.</string>
+    <string name="mode_intention">Intention check</string>
+    <string name="mode_intention_description">Name what you\'re reaching for.</string>
+    <string name="mode_time_limit">Session limit</string>
+    <string name="mode_time_limit_description">Choose how long you\'ll stay, then get a reminder.</string>
+
+    <!-- Settings and permissions -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_permissions_title">Setup</string>
+    <string name="settings_permissions_subtitle">Turn on all three so Pause can step in reliably, even when the phone is busy.</string>
+    <string name="permission_progress">%1$d of %2$d complete</string>
+    <string name="permission_granted">Granted</string>
+    <string name="permission_needs_action">Needs action</string>
+    <string name="permission_grant">Grant</string>
+    <string name="permission_open">Open</string>
+    <string name="permission_battery_list">Battery settings</string>
+    <string name="permission_accessibility_title">App opening detection</string>
+    <string name="permission_accessibility_body">Accessibility lets Pause notice when a monitored app opens. It listens only for window changes and never reads screen content.</string>
+    <string name="permission_overlay_title">Display over other apps</string>
+    <string name="permission_overlay_body">Lets Pause draw its pause screen and the gentle session-end reminder over the app you opened.</string>
+    <string name="permission_battery_title">Battery optimisation</string>
+    <string name="permission_battery_body">Exempting Pause keeps the service awake so the pause is there when you need it. It uses negligible battery when idle.</string>
+    <string name="settings_preferences_title">Behaviour</string>
+    <string name="settings_cooldown_title">Grace period</string>
+    <string name="settings_cooldown_body">After you continue, Pause stays out of your way for this long.</string>
+    <string name="settings_cooldown_option">%1$d min</string>
+    <string name="settings_breathing_title">Breathing length</string>
+    <string name="settings_breathing_body">How long the Continue button stays locked during a breathing pause.</string>
+    <string name="settings_breathing_option">%1$d s</string>
+    <string name="settings_default_mode_title">Default friction</string>
+    <string name="settings_default_mode_body">Choose one or more. They run in the order shown.</string>
+    <string name="settings_default_mode_minimum">At least one friction stays on.</string>
+    <string name="settings_privacy_title">Privacy</string>
+    <string name="settings_privacy_body">No internet permission. No analytics. No accounts. Settings and history are stored only in a local DataStore and Room database on this phone.</string>
+    <string name="settings_about">Pause %1$s · Built with Jetpack Compose</string>
+
+    <!-- App picker -->
+    <string name="picker_title">Choose apps</string>
+    <string name="picker_done">Done</string>
+    <string name="picker_search_placeholder">Search apps</string>
+    <plurals name="picker_selected_count">
+        <item quantity="one">%1$d app selected</item>
+        <item quantity="other">%1$d apps selected</item>
+    </plurals>
+    <string name="picker_hint">Tap to include</string>
+    <string name="picker_none">No launchable apps found</string>
+    <string name="picker_empty">No apps match “%1$s”</string>
+
+    <!-- Pause surface -->
+    <string name="intervention_pausing">PAUSING</string>
+    <string name="intervention_opening">%1$s is about to open</string>
+    <string name="intervention_step">Step %1$d of %2$d</string>
+    <string name="unknown_app">this app</string>
+    <string name="breathing_title">Take one breath</string>
+    <string name="breathing_body">Nothing needs to happen this second. Let the circle finish, then choose.</string>
+    <string name="breathing_inhale">Breathe in as the circle grows. Breathe out as it settles.</string>
+    <string name="breathing_ready">Ready when you are.</string>
+    <string name="breathing_seconds">seconds</string>
+    <string name="intention_title">What are you reaching for?</string>
+    <string name="intention_body">Naming it is often enough to break the pull.</string>
+    <string name="intention_placeholder">Or write it in your own words</string>
+    <plurals name="intention_chars_left">
+        <item quantity="one">%1$d character left</item>
+        <item quantity="other">%1$d characters left</item>
+    </plurals>
+    <string name="intention_bored_note">Boredom is information, not an emergency. Closing is still a win.</string>
+    <string name="reason_message">Check a message</string>
+    <string name="reason_lookup">Look something up</string>
+    <string name="reason_bored">Just bored</string>
+    <string name="reason_work">Work / study</string>
+    <string name="time_limit_title">How long do you need?</string>
+    <string name="time_limit_body">Pick a limit. Pause will nudge you when time is up.</string>
+    <string name="limit_5_title">5 minutes</string>
+    <string name="limit_5_body">A quick check</string>
+    <string name="limit_15_title">15 minutes</string>
+    <string name="limit_15_body">One small task</string>
+    <string name="limit_30_title">30 minutes</string>
+    <string name="limit_30_body">A focused block</string>
+    <string name="hint_breathing_locked">Continue unlocks in %1$d s</string>
+    <string name="hint_breathing_ready">The pause is complete</string>
+    <string name="hint_intention">Name an intention to continue</string>
+    <string name="hint_time_limit">Pick a time limit to continue</string>
+    <string name="hint_working">One moment…</string>
+    <string name="hint_next_step">Ready for the next step.</string>
+    <string name="continue_next">Next</string>
+    <string name="continue_to_app">Continue to %1$s</string>
+    <string name="close_and_leave">Close &amp; do something else</string>
+
+    <!-- Session reminder overlay -->
+    <string name="session_reminder_title">Time\'s up</string>
+    <string name="session_reminder_body">Your pause for %1$s has ended. Ready to put the phone down?</string>
+    <string name="session_reminder_close_app">Close app</string>
+    <string name="session_reminder_keep_going">Keep going</string>
+</resources>

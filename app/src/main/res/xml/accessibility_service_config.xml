@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Battery-first accessibility configuration.
+
+    * accessibilityEventTypes is restricted to TYPE_WINDOW_STATE_CHANGED.
+      We do not subscribe to content changes, scrolling, typing or window
+      content retrieval, so Pause never receives a stream of noisy events.
+    * canRetrieveWindowContent is false: Pause never reads what is on screen.
+    * notificationTimeout coalesces bursts of events.
+    * No android:packageNames entry here: the service sets the package filter at
+      runtime (AccessibilityServiceInfo.packageNames) to exactly the monitored
+      apps. When the user has not selected any app, the service filters down to
+      its own package, which means the framework wakes us for nothing.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:settingsActivity="com.pause.app.MainActivity"
+    android:summary="@string/accessibility_service_summary" />
