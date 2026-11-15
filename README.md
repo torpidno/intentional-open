@@ -181,6 +181,19 @@ app-op and temporarily enables Pause, then restores the accessibility service
 list. Run it on a disposable test emulator, not a personal device. It is skipped
 when the Settings package is unavailable.
 
+## Continuous integration
+
+[`.github/workflows/android.yml`](.github/workflows/android.yml) runs on every
+push and pull request:
+
+- JVM unit, migration, and DataStore failure tests.
+- Debug build and Android-test APK compilation.
+- Instrumented pause, accessibility, and error-dialog tests on API 26 and API 35
+  emulators, with reports uploaded when a run fails.
+
+The emulator jobs require a runner with KVM acceleration; GitHub-hosted Ubuntu
+runners provide it.
+
 ## Project layout
 
 ```
@@ -206,6 +219,7 @@ app/src/main/java/com/pause/app/
 ├── MainActivity.kt
 └── PauseApplication.kt
 
+.github/workflows/      Unit + API 26/35 emulator CI
 app/schemas/            Exported Room schemas (v2 baseline)
 
 app/src/test/java/com/pause/app/
