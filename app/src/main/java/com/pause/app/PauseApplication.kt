@@ -1,6 +1,7 @@
 package com.pause.app
 
 import android.app.Application
+import com.pause.app.data.repository.HistoryRetentionManager
 import com.pause.app.di.ApplicationScope
 import com.pause.app.service.SessionStartupReconciler
 import dagger.hilt.android.HiltAndroidApp
@@ -19,6 +20,9 @@ class PauseApplication : Application() {
     lateinit var sessionStartupReconciler: SessionStartupReconciler
 
     @Inject
+    lateinit var historyRetentionManager: HistoryRetentionManager
+
+    @Inject
     @ApplicationScope
     lateinit var applicationScope: CoroutineScope
 
@@ -28,6 +32,12 @@ class PauseApplication : Application() {
         // can show stale PENDING history or start a duplicate session.
         applicationScope.launch {
             runCatching { sessionStartupReconciler.reconcile() }
+        }
+        // Apply the local retention window at startup; the direct DataStore read
+        // inside the manager waits for the persisted policy, not its Eagerly
+        // seeded default.
+        applicationScope.launch {
+            runCatching { historyRetentionManager.pruneNow() }
         }
     }
 }

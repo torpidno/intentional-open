@@ -8,43 +8,26 @@ change, **L** = new tracking or platform work.
 
 ## Shipped in this pass
 
-- Ordered multi-friction defaults and per-app sequences.
+- Ordered multi-friction defaults and per-app sequences, including up/down
+  controls and order-preserving history/active sequences.
+- Process-death pause-step restore and startup reconciliation of interrupted
+  session starts.
 - Local history screen with outcome filters and the full friction sequence.
 - Durable session limits: persisted deadline, restart restore, boot/update
   rescheduling, and a notification fallback when the process or overlay is
   unavailable.
 - Notification setup card and local notification channel.
+- Global active-hours schedule with selectable days and overnight windows.
+- Per-app 15-minute / 1-hour snooze with automatic gate-level expiry.
+- 30/90/forever history retention, clear history, and local CSV export/import
+  through the Storage Access Framework.
 - Room migration that preserves existing history while adding the sequence
-  column, covered by a real v1→v2 SQLite migration test.
+  column, covered by a real v1→v2 SQLite migration test; exported v2 schema and
+  CI on API 26/35.
 
 ## Top five next
 
-### 1. Reorder the friction sequence (S–M)
-
-**Why:** The sequence is currently canonical: Breathing → Intention → Session
-limit. Some users will want the time limit before the intention, or breathing
-after a limit.
-
-**How:** Store per-app and default sequences as ordered lists (not string sets),
-add up/down controls or drag-and-drop in Settings and the app override dialog,
-and keep the current order for existing preferences as the migration default.
-
-**Done when:** A user can reorder any enabled sequence, the pause follows that
-order, and legacy values still load in canonical order.
-
-### 2. Save the current pause step across process death (S)
-
-**Why:** Rotation is safe because the ViewModel survives, but a process kill
-while the pause is visible restarts the sequence at step one.
-
-**How:** Put `stepIndex`, selected reason, note, selected limit, and the mode
-list in `SavedStateHandle`; add a small state machine/reducer so the transitions
-are testable.
-
-**Done when:** A process-death recreation resumes the same step and selections,
-and the final action still starts the limit only once.
-
-### 3. Multi-step ViewModel and Compose tests (M)
+### 1. Multi-step ViewModel and Compose tests (M)
 
 **Why:** The new sequence is the highest-risk logic in the app, and the current
 instrumented tests cover single-mode pauses only.
@@ -57,44 +40,50 @@ settings checkboxes, and the step header/CTA.
 **Done when:** The sequence paths are exercised on JVM/Robolectric and the
 instrumented suite covers at least one two-step pause on an emulator.
 
-### 4. History retention and local export (S–M)
+### 2. Profiles (L)
 
-**Why:** The history screen is useful, but users need control over how long it
-is kept and how to move it.
+**Why:** Work, Evening, and Weekend need different app sets, sequences, and
+schedules. The current global schedule is a single window.
 
-**How:** Surface a 30/90/forever retention setting and call the existing
-`deleteOlderThan` DAO method; add JSON/CSV export and import through the Storage
-Access Framework. No cloud provider.
+**How:** Store named profile bundles locally and switch them manually or by a
+schedule. Keep one active profile at a time; no account or sync.
 
-**Done when:** Retention runs on a schedule, “Clear history” works, and an
-export can be imported on a fresh install.
+**Done when:** Switching profiles updates the gate's settings atomically and a
+profile's schedule can activate it.
 
-### 5. Schedules and temporary snooze (M)
+### 3. Daily total limits (L)
 
-**Why:** Monitoring every app at every hour is rarely what people want. The
-current per-app switch is indefinite.
+**Why:** A per-session limit does not cap a whole day of short visits.
 
-**How:** Evaluate local time windows at interception time; add 15-minute and
-1-hour snoozes with automatic resume. Store windows and snooze deadlines in
-DataStore.
+**How:** Track foreground time locally per app and enforce a daily budget
+before opening. Keep the data in Room and never sample screen content.
 
-**Done when:** A monitored app opens without a pause outside its window, and a
-snoozed app resumes automatically without losing its sequence.
+**Done when:** A budget expiry blocks a new pause with a clear local message and
+resets at local midnight.
+
+### 4. Stats ranges and trends (S–M)
+
+**Why:** Today-only counts hide longer-term patterns.
+
+**How:** Add 7-day and 30-day aggregates, per-app trends, and time-of-day
+insights to the existing local Room queries.
+
+**Done when:** The dashboard can switch ranges without any network call.
+
+### 5. Optional strict mode (M)
+
+**Why:** A friction can be bypassed by disabling Pause or removing the app.
+
+**How:** Add an opt-in, recoverable delay or typed phrase before those changes.
+
+**Done when:** Strict mode is clearly recoverable and never traps a user.
 
 ## Later product work
 
-- **Daily total limits (L):** Track foreground time per app and enforce a daily
-  budget alongside per-session limits.
-- **Profiles (L):** Work, Evening, and Weekend bundles containing app sets,
-  sequences, and schedules.
-- **Optional strict mode (M):** A short delay or typed phrase before disabling
-  Pause or removing a friction. Keep it opt-in and recoverable.
 - **Manual pause and Quick Settings tile (S–M):** Start a breathing exercise on
   demand and offer a tile/shortcut for the master switch.
 - **Session reminder upgrades (M):** One-minute warning, extend, close-app
   action, and a richer notification.
-- **Stats ranges and trends (S–M):** Today/7-day/30-day views, per-app trends,
-  and “most triggered” time of day.
 - **Custom durations (S):** Free-form breathing, grace, and limit values.
 - **Guided onboarding and diagnostics (M):** First-run setup, OEM
   battery/autostart guidance, live service/overlay/notification health checks.
@@ -118,10 +107,10 @@ snoozed app resumes automatically without losing its sequence.
   into a pure state machine with exhaustive tests.
 - **Full sequence logging (shipped):** History now reads a sequence column;
   extend analytics/aggregates if the dashboard needs mode-specific insights.
-- **Room schema export and migration tests (M):** Turn on `exportSchema`,
-  commit schemas, and test 1→2 and future migrations with real SQLite.
-- **CI and device matrix (M):** Build, unit tests, lint, release checks, and
-  Compose/instrumented runs on API 26/35/36.
+- **Schema drift guard (shipped):** Room exports and commits v2; keep the
+  real-SQLite migration test current when adding version 3.
+- **CI and device matrix (shipped):** Unit, migration, Debug, Android-test APK,
+  and API 26/35 instrumented runs. Add API 36 when the toolchain supports it.
 - **Platform updates (M–L):** target/compile SDK 36, AGP/Gradle/Kotlin updates,
   and a fresh Play target-SDK review.
 - **Session fallback hardening (M):** Add a foreground-service or

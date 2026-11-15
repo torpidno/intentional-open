@@ -2,6 +2,8 @@ package com.pause.app.ui.history
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pause.app.data.export.HistoryCsv
+import com.pause.app.data.repository.HistoryRetentionManager
 import com.pause.app.data.repository.InterceptionRepository
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.InterventionOutcome
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 enum class HistoryFilter {
     ALL,
@@ -43,7 +46,8 @@ data class HistoryUiState(
 
 @HiltViewModel
 class HistoryViewModel @Inject constructor(
-    interceptionRepository: InterceptionRepository,
+    private val interceptionRepository: InterceptionRepository,
+    private val historyRetentionManager: HistoryRetentionManager,
     clock: Clock,
 ) : ViewModel() {
 
@@ -79,8 +83,24 @@ class HistoryViewModel @Inject constructor(
         initialValue = HistoryUiState(),
     )
 
+    init {
+        // Pruning here also covers users who never leave the app open at boot.
+        viewModelScope.launch {
+            runCatching { historyRetentionManager.pruneNow() }
+        }
+    }
+
     fun setFilter(value: HistoryFilter) {
         filter.value = value
+    }
+
+    suspend fun exportCsv(): String = HistoryCsv.encode(interceptionRepository.exportHistory())
+
+    suspend fun importCsv(csv: String): Int =
+        interceptionRepository.importHistory(HistoryCsv.decode(csv))
+
+    suspend fun clearHistory() {
+        interceptionRepository.clearHistory()
     }
 }
 

@@ -288,6 +288,13 @@ class InterventionViewModelTest {
             flowOf(emptyList())
 
         override suspend fun deleteOlderThan(cutoffMillis: Long) = Unit
+
+        override suspend fun getAll(): List<InterventionLogEntity> = emptyList()
+
+        override suspend fun insertAll(logs: List<InterventionLogEntity>): List<Long> =
+            logs.map { insert(it) }
+
+        override suspend fun deleteAll() = Unit
     }
 
     private class RecordingAlarmScheduler : SessionAlarmScheduler {

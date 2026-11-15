@@ -31,6 +31,11 @@
     <string name="home_monitored_title">Monitored apps</string>
     <string name="home_add_apps">Add apps</string>
     <string name="home_history_action">History</string>
+    <string name="home_snooze">Snooze</string>
+    <string name="home_snooze_15">Snooze for 15 minutes</string>
+    <string name="home_snooze_60">Snooze for 1 hour</string>
+    <string name="home_snooze_resume">Resume now</string>
+    <string name="home_snoozed_until">Snoozed until %1$s</string>
     <string name="home_empty_title">No apps monitored</string>
     <string name="home_empty_body">Choose the apps that tend to pull you in. Pause will meet you there.</string>
     <string name="home_empty_action">Choose apps</string>
@@ -64,6 +69,20 @@
     <string name="history_outcome_walked_away">Walked away</string>
     <string name="history_outcome_continued">Continued</string>
     <string name="history_outcome_unfinished">Unfinished</string>
+    <string name="history_export_action">Export</string>
+    <string name="history_import_action">Import</string>
+    <string name="history_export_success">History exported to the selected file.</string>
+    <string name="history_export_failed">Couldn\'t export history.</string>
+    <string name="history_import_success">Imported %1$d pauses.</string>
+    <string name="history_import_empty">No pauses found in that file.</string>
+    <string name="history_import_failed">Couldn\'t import that file. Choose a Pause CSV export.</string>
+    <string name="history_clear_action">Clear history</string>
+    <string name="history_clear_title">Clear all history?</string>
+    <string name="history_clear_body">This deletes every pause record on this phone. It can\'t be undone.</string>
+    <string name="history_clear_confirm">Clear</string>
+    <string name="history_clear_cancel">Cancel</string>
+    <string name="history_clear_success">History cleared.</string>
+    <string name="history_clear_failed">Couldn\'t clear history.</string>
 
     <!-- Friction modes -->
     <string name="mode_breathing">Breathing pause</string>
@@ -72,6 +91,15 @@
     <string name="mode_intention_description">Name what you\'re reaching for.</string>
     <string name="mode_time_limit">Session limit</string>
     <string name="mode_time_limit_description">Choose how long you\'ll stay, then get a reminder.</string>
+
+    <!-- Weekdays for the active-hours schedule -->
+    <string name="day_monday">Mon</string>
+    <string name="day_tuesday">Tue</string>
+    <string name="day_wednesday">Wed</string>
+    <string name="day_thursday">Thu</string>
+    <string name="day_friday">Fri</string>
+    <string name="day_saturday">Sat</string>
+    <string name="day_sunday">Sun</string>
 
     <!-- Settings and permissions -->
     <string name="settings_title">Settings</string>
@@ -102,6 +130,21 @@
     <string name="settings_default_mode_title">Default friction</string>
     <string name="settings_default_mode_body">Choose one or more. They run in the order shown.</string>
     <string name="settings_default_mode_minimum">At least one friction stays on. Use the arrows to change the order.</string>
+    <string name="settings_schedule_title">Active hours</string>
+    <string name="settings_schedule_body">Only pause during this local time window. Outside it, monitored apps open normally.</string>
+    <string name="settings_schedule_enabled">Use active hours</string>
+    <string name="settings_schedule_start">Starts %1$s</string>
+    <string name="settings_schedule_end">Ends %1$s</string>
+    <string name="settings_schedule_days">Days</string>
+    <string name="settings_schedule_overnight">A window that ends earlier than it starts continues overnight.</string>
+    <string name="settings_schedule_start_title">Start time</string>
+    <string name="settings_schedule_end_title">End time</string>
+    <string name="settings_schedule_save">Save</string>
+    <string name="settings_schedule_cancel">Cancel</string>
+    <string name="settings_retention_title">History retention</string>
+    <string name="settings_retention_body">Older pauses are deleted automatically. Nothing leaves the phone.</string>
+    <string name="settings_retention_days">%1$d days</string>
+    <string name="settings_retention_forever">Keep forever</string>
     <string name="friction_sequence_add_hint">Add another friction</string>
     <string name="cd_move_friction_up">Move %1$s up</string>
     <string name="cd_move_friction_down">Move %1$s down</string>

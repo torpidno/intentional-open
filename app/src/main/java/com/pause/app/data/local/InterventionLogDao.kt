@@ -70,4 +70,13 @@ interface InterventionLogDao {
 
     @Query("DELETE FROM intervention_logs WHERE timestampMillis < :cutoffMillis")
     suspend fun deleteOlderThan(cutoffMillis: Long)
+
+    @Query("SELECT * FROM intervention_logs ORDER BY timestampMillis ASC, id ASC")
+    suspend fun getAll(): List<InterventionLogEntity>
+
+    @Insert
+    suspend fun insertAll(logs: List<InterventionLogEntity>): List<Long>
+
+    @Query("DELETE FROM intervention_logs")
+    suspend fun deleteAll()
 }

@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.pause.app.domain.model.FrictionMode
 import java.io.File
+import java.time.DayOfWeek
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -138,6 +139,46 @@ class SettingsRepositoryTest {
             "com.example=TIME_LIMIT,INTENTION",
             dataStore.data.first()[stringPreferencesKey("app_mode_overrides")],
         )
+    }
+
+    @Test
+    fun `schedule window, days, enablement and retention persist`() = runTest {
+        repository.setScheduleEnabled(true)
+        repository.setScheduleWindow(startMinutes = 22 * 60, endMinutes = 6 * 60)
+        repository.toggleScheduleDay(DayOfWeek.MONDAY)
+        repository.setHistoryRetentionDays(30)
+
+        val settings = repository.settings.first {
+            it.scheduleEnabled &&
+                it.historyRetentionDays == 30 &&
+                DayOfWeek.MONDAY !in it.scheduleDays
+        }
+        assertEquals(true, settings.scheduleEnabled)
+        assertEquals(22 * 60, settings.scheduleStartMinutes)
+        assertEquals(6 * 60, settings.scheduleEndMinutes)
+        assertEquals(30, settings.historyRetentionDays)
+        assertEquals(DayOfWeek.entries.toSet() - DayOfWeek.MONDAY, settings.scheduleDays)
+    }
+
+    @Test
+    fun `retention is read directly from disk for maintenance`() = runTest {
+        assertEquals(0, repository.currentHistoryRetentionDays())
+
+        repository.setHistoryRetentionDays(30)
+
+        assertEquals(30, repository.currentHistoryRetentionDays())
+    }
+
+    @Test
+    fun `snooze deadline persists and can be cleared`() = runTest {
+        val until = System.currentTimeMillis() + 60_000L
+        repository.setAppSnoozedUntil("com.example", until)
+
+        repository.settings.first { it.snoozedUntilMillis["com.example"] == until }
+        repository.clearAppSnooze("com.example")
+
+        val cleared = repository.settings.first { it.snoozedUntilMillis.isEmpty() }
+        assertEquals(emptyMap<String, Long>(), cleared.snoozedUntilMillis)
     }
 
     @Test

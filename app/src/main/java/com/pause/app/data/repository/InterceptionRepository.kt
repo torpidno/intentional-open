@@ -3,6 +3,7 @@ package com.pause.app.data.repository
 import com.pause.app.data.local.InterventionLogDao
 import com.pause.app.data.local.InterventionLogEntity
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.HistoryArchiveEntry
 import com.pause.app.domain.model.InterventionOutcome
 import com.pause.app.domain.model.InterventionRecord
 import com.pause.app.domain.model.TodayStats
@@ -100,6 +101,52 @@ class InterceptionRepository @Inject constructor(
     /** Closes pause rows that were left pending by an interrupted process. */
     suspend fun completeStalePendingAttempts() {
         dao.completeAllPending(InterventionOutcome.WALKED_AWAY)
+    }
+
+    /** Every record, oldest first, for a local archive. */
+    suspend fun exportHistory(): List<HistoryArchiveEntry> =
+        dao.getAll().map { it.toArchiveEntry() }
+
+    /** Inserts archive rows with new local IDs; returns how many were added. */
+    suspend fun importHistory(entries: List<HistoryArchiveEntry>): Int {
+        if (entries.isEmpty()) return 0
+        dao.insertAll(entries.map { it.toEntity() })
+        return entries.size
+    }
+
+    suspend fun deleteHistoryBefore(cutoffMillis: Long) {
+        dao.deleteOlderThan(cutoffMillis)
+    }
+
+    suspend fun clearHistory() {
+        dao.deleteAll()
+    }
+
+    private fun InterventionLogEntity.toArchiveEntry(): HistoryArchiveEntry {
+        val record = toRecord()
+        return HistoryArchiveEntry(
+            timestampMillis = record.timestampMillis,
+            packageName = record.packageName,
+            appLabel = record.appLabel,
+            outcome = record.outcome,
+            frictionModes = record.frictionModes,
+            intention = record.intention,
+            sessionLimitMinutes = record.sessionLimitMinutes,
+        )
+    }
+
+    private fun HistoryArchiveEntry.toEntity(): InterventionLogEntity {
+        val normalized = frictionModes.distinct().ifEmpty { listOf(FrictionMode.BREATHING) }
+        return InterventionLogEntity(
+            packageName = packageName,
+            appLabel = appLabel,
+            timestampMillis = timestampMillis,
+            outcome = outcome,
+            frictionMode = normalized.first(),
+            frictionModeSequence = normalized.joinToString(",") { it.name },
+            intention = intention,
+            sessionLimitMinutes = sessionLimitMinutes,
+        )
     }
 
     private fun InterventionLogEntity.toRecord(): InterventionRecord {

@@ -13,12 +13,15 @@ import com.pause.app.di.ApplicationScope
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.moveFrictionMode
 import java.io.IOException
+import java.time.DayOfWeek
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -60,6 +63,81 @@ class SettingsRepository @Inject constructor(
         if (seconds <= 0) return
         dataStore.edit { it[Keys.BREATHING_SECONDS] = seconds }
     }
+
+    suspend fun setScheduleEnabled(enabled: Boolean) {
+        dataStore.edit { it[Keys.SCHEDULE_ENABLED] = enabled }
+    }
+
+    /** Sets an inclusive start and exclusive end, in minutes since midnight. */
+    suspend fun setScheduleWindow(startMinutes: Int, endMinutes: Int) {
+        if (startMinutes !in 0 until PauseSettings.MINUTES_PER_DAY) return
+        if (endMinutes !in 0 until PauseSettings.MINUTES_PER_DAY) return
+        dataStore.edit { preferences ->
+            preferences[Keys.SCHEDULE_START_MINUTES] = startMinutes
+            preferences[Keys.SCHEDULE_END_MINUTES] = endMinutes
+        }
+    }
+
+    /** Toggles a schedule day while keeping at least one active day. */
+    suspend fun toggleScheduleDay(day: DayOfWeek) {
+        dataStore.edit { preferences ->
+            val days = preferences.scheduleDays().toMutableSet()
+            if (day in days) {
+                if (days.size == 1) return@edit
+                days -= day
+            } else {
+                days += day
+            }
+            preferences[Keys.SCHEDULE_DAYS] = days.map { it.name }.toSet()
+        }
+    }
+
+    /** Temporarily switches an app off for [minutes]; the deadline is checked by the gate. */
+    suspend fun snoozeApp(packageName: String, minutes: Int) {
+        if (packageName.isBlank() || minutes <= 0) return
+        setAppSnoozedUntil(
+            packageName = packageName,
+            untilMillis = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(minutes.toLong()),
+        )
+    }
+
+    suspend fun setAppSnoozedUntil(packageName: String, untilMillis: Long) {
+        if (packageName.isBlank() || untilMillis <= 0L) return
+        dataStore.edit { preferences ->
+            val snoozes = preferences.snoozedUntilMillis().toMutableMap()
+            snoozes[packageName] = untilMillis
+            preferences[Keys.SNOOZED_UNTIL] = encodeSnoozes(snoozes)
+        }
+    }
+
+    suspend fun clearAppSnooze(packageName: String) {
+        if (packageName.isBlank()) return
+        dataStore.edit { preferences ->
+            val snoozes = preferences.snoozedUntilMillis().toMutableMap()
+            if (snoozes.remove(packageName) != null) {
+                preferences[Keys.SNOOZED_UNTIL] = encodeSnoozes(snoozes)
+            }
+        }
+    }
+
+    /** 0 keeps history forever; other values are positive day counts. */
+    suspend fun setHistoryRetentionDays(days: Int) {
+        if (days < 0 || days > 3650) return
+        dataStore.edit { it[Keys.HISTORY_RETENTION_DAYS] = days }
+    }
+
+    /**
+     * Reads the value directly from disk instead of the Eagerly-seeded flow, so
+     * startup maintenance cannot mistake the temporary default for the user's
+     * chosen retention policy.
+     */
+    suspend fun currentHistoryRetentionDays(): Int =
+        dataStore.data
+            .catch { throwable ->
+                if (throwable is IOException) emit(emptyPreferences()) else throw throwable
+            }
+            .first()[Keys.HISTORY_RETENTION_DAYS]
+            ?: PauseSettings.DEFAULT_HISTORY_RETENTION_DAYS
 
     /** Compatibility helper for a single-mode default; used by tests/imports. */
     suspend fun setDefaultFrictionMode(mode: FrictionMode) {
@@ -238,6 +316,38 @@ private fun MutablePreferences.writeDefaultFrictionModes(
     this[Keys.DEFAULT_FRICTION_MODE] = modes.first().name
 }
 
+private const val SNOOZE_SEPARATOR = "|"
+private const val SNOOZE_VALUE_SEPARATOR = "="
+
+internal fun encodeSnoozes(snoozes: Map<String, Long>): String =
+    snoozes.entries
+        .filter { it.key.isNotBlank() && it.value > 0L }
+        .sortedBy { it.key }
+        .joinToString(SNOOZE_SEPARATOR) { (packageName, until) ->
+            "$packageName$SNOOZE_VALUE_SEPARATOR$until"
+        }
+
+internal fun decodeSnoozes(raw: String): Map<String, Long> =
+    raw.split(SNOOZE_SEPARATOR)
+        .mapNotNull { entry ->
+            val parts = entry.split(SNOOZE_VALUE_SEPARATOR, limit = 2)
+            if (parts.size != 2 || parts[0].isBlank()) return@mapNotNull null
+            val until = parts[1].toLongOrNull() ?: return@mapNotNull null
+            if (until <= 0L) return@mapNotNull null
+            parts[0] to until
+        }
+        .toMap()
+
+private fun Preferences.snoozedUntilMillis(): Map<String, Long> =
+    decodeSnoozes(this[Keys.SNOOZED_UNTIL].orEmpty())
+
+private fun Preferences.scheduleDays(): Set<DayOfWeek> {
+    val stored = this[Keys.SCHEDULE_DAYS].orEmpty()
+        .mapNotNull { runCatching { DayOfWeek.valueOf(it) }.getOrNull() }
+        .toSet()
+    return stored.ifEmpty { DayOfWeek.entries.toSet() }
+}
+
 private fun Preferences.toPauseSettings(): PauseSettings =
     PauseSettings(
         isEnabled = this[Keys.ENABLED] ?: true,
@@ -249,6 +359,15 @@ private fun Preferences.toPauseSettings(): PauseSettings =
         monitoredPackages = this[Keys.MONITORED_PACKAGES].orEmpty(),
         pausedPackages = this[Keys.PAUSED_PACKAGES].orEmpty(),
         appModeOverrides = decodeOverrides(this[Keys.APP_MODE_OVERRIDES].orEmpty()),
+        scheduleEnabled = this[Keys.SCHEDULE_ENABLED] ?: false,
+        scheduleDays = scheduleDays(),
+        scheduleStartMinutes = this[Keys.SCHEDULE_START_MINUTES]
+            ?: PauseSettings.DEFAULT_SCHEDULE_START_MINUTES,
+        scheduleEndMinutes = this[Keys.SCHEDULE_END_MINUTES]
+            ?: PauseSettings.DEFAULT_SCHEDULE_END_MINUTES,
+        snoozedUntilMillis = snoozedUntilMillis(),
+        historyRetentionDays = this[Keys.HISTORY_RETENTION_DAYS]
+            ?: PauseSettings.DEFAULT_HISTORY_RETENTION_DAYS,
     )
 
 /**
@@ -265,4 +384,10 @@ private object Keys {
     val MONITORED_PACKAGES = stringSetPreferencesKey("monitored_packages")
     val PAUSED_PACKAGES = stringSetPreferencesKey("paused_packages")
     val APP_MODE_OVERRIDES = stringPreferencesKey("app_mode_overrides")
+    val SCHEDULE_ENABLED = booleanPreferencesKey("schedule_enabled")
+    val SCHEDULE_DAYS = stringSetPreferencesKey("schedule_days")
+    val SCHEDULE_START_MINUTES = intPreferencesKey("schedule_start_minutes")
+    val SCHEDULE_END_MINUTES = intPreferencesKey("schedule_end_minutes")
+    val SNOOZED_UNTIL = stringPreferencesKey("snoozed_until")
+    val HISTORY_RETENTION_DAYS = intPreferencesKey("history_retention_days")
 }

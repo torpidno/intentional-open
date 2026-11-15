@@ -5,11 +5,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.data.preferences.SettingsRepository
+import com.pause.app.data.repository.HistoryRetentionManager
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.util.PermissionChecker
 import com.pause.app.util.PermissionSnapshot
 import com.pause.app.util.PermissionType
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.DayOfWeek
 import javax.inject.Inject
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +30,7 @@ data class SettingsUiState(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
+    private val historyRetentionManager: HistoryRetentionManager,
     private val permissionChecker: PermissionChecker,
 ) : ViewModel() {
 
@@ -78,5 +81,25 @@ class SettingsViewModel @Inject constructor(
 
     fun moveDefaultFrictionMode(mode: FrictionMode, offset: Int) {
         viewModelScope.launch { settingsRepository.moveDefaultFrictionMode(mode, offset) }
+    }
+
+    fun setScheduleEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setScheduleEnabled(enabled) }
+    }
+
+    fun setScheduleWindow(startMinutes: Int, endMinutes: Int) {
+        viewModelScope.launch { settingsRepository.setScheduleWindow(startMinutes, endMinutes) }
+    }
+
+    fun toggleScheduleDay(day: DayOfWeek) {
+        viewModelScope.launch { settingsRepository.toggleScheduleDay(day) }
+    }
+
+    fun setHistoryRetentionDays(days: Int) {
+        if (days < 0 || days > 3650) return
+        viewModelScope.launch {
+            settingsRepository.setHistoryRetentionDays(days)
+            historyRetentionManager.pruneNow(days)
+        }
     }
 }

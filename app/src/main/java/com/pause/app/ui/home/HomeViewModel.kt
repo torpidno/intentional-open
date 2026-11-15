@@ -25,6 +25,7 @@ data class MonitoredAppUi(
     val icon: ImageBitmap?,
     val isPaused: Boolean,
     val modeOverride: List<FrictionMode>?,
+    val snoozedUntilMillis: Long? = null,
 )
 
 data class HomeUiState(
@@ -75,6 +76,8 @@ class HomeViewModel @Inject constructor(
                     icon = installed?.icon ?: installedAppsRepository.iconFor(packageName),
                     isPaused = packageName in settings.pausedPackages,
                     modeOverride = settings.appModeOverrides[packageName],
+                    snoozedUntilMillis = settings.snoozedUntilMillis[packageName]
+                        ?.takeIf { it > System.currentTimeMillis() },
                 )
             }
             .sortedBy { it.label.lowercase() }
@@ -116,4 +119,11 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setAppModeOverrides(packageName, modes) }
     }
 
+    fun snoozeApp(packageName: String, minutes: Int) {
+        viewModelScope.launch { settingsRepository.snoozeApp(packageName, minutes) }
+    }
+
+    fun clearAppSnooze(packageName: String) {
+        viewModelScope.launch { settingsRepository.clearAppSnooze(packageName) }
+    }
 }

@@ -2,6 +2,11 @@ package com.pause.app.data.preferences
 
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.moveFrictionMode
+import java.time.DayOfWeek
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -116,4 +121,85 @@ class PauseSettingsTest {
             settings.frictionModesFor("com.instagram.android"),
         )
     }
+
+    @Test
+    fun `a disabled schedule is active at every time`() {
+        val settings = PauseSettings(
+            scheduleEnabled = false,
+            scheduleDays = emptySet(),
+            scheduleStartMinutes = 9 * 60,
+            scheduleEndMinutes = 17 * 60,
+        )
+
+        assertTrue(settings.isScheduleActive(mondayAt(hour = 3, minute = 0)))
+    }
+
+    @Test
+    fun `active hours respect the selected days and boundaries`() {
+        val settings = PauseSettings(
+            scheduleEnabled = true,
+            scheduleDays = setOf(DayOfWeek.MONDAY),
+            scheduleStartMinutes = 9 * 60,
+            scheduleEndMinutes = 17 * 60,
+        )
+
+        assertTrue(settings.isScheduleActive(mondayAt(hour = 9, minute = 0)))
+        assertTrue(settings.isScheduleActive(mondayAt(hour = 16, minute = 59)))
+        assertFalse(settings.isScheduleActive(mondayAt(hour = 17, minute = 0)))
+        assertFalse(
+            settings.isScheduleActive(
+                ZonedDateTime.of(2026, 11, 17, 10, 0, 0, 0, ZoneOffset.UTC),
+            ),
+        )
+    }
+
+    @Test
+    fun `an overnight window wraps past midnight`() {
+        val settings = PauseSettings(
+            scheduleEnabled = true,
+            scheduleDays = DayOfWeek.entries.toSet(),
+            scheduleStartMinutes = 22 * 60,
+            scheduleEndMinutes = 6 * 60,
+        )
+
+        assertTrue(settings.isScheduleActive(mondayAt(hour = 22, minute = 0)))
+        assertTrue(settings.isScheduleActive(mondayAt(hour = 23, minute = 30)))
+        assertTrue(
+            settings.isScheduleActive(
+                ZonedDateTime.of(2026, 11, 17, 5, 59, 0, 0, ZoneOffset.UTC),
+            ),
+        )
+        assertFalse(
+            settings.isScheduleActive(
+                ZonedDateTime.of(2026, 11, 17, 6, 0, 0, 0, ZoneOffset.UTC),
+            ),
+        )
+        assertFalse(settings.isScheduleActive(mondayAt(hour = 12, minute = 0)))
+    }
+
+    @Test
+    fun `equal schedule endpoints mean all-day`() {
+        val settings = PauseSettings(
+            scheduleEnabled = true,
+            scheduleStartMinutes = 0,
+            scheduleEndMinutes = 0,
+        )
+
+        assertTrue(settings.isScheduleActive(mondayAt(hour = 0, minute = 0)))
+        assertTrue(settings.isScheduleActive(mondayAt(hour = 23, minute = 59)))
+    }
+
+    @Test
+    fun `a snooze is active only before its deadline`() {
+        val settings = PauseSettings(
+            snoozedUntilMillis = mapOf("com.example" to 2_000L),
+        )
+
+        assertTrue(settings.isSnoozed("com.example", nowMillis = 1_999L))
+        assertFalse(settings.isSnoozed("com.example", nowMillis = 2_000L))
+        assertFalse(settings.isSnoozed("com.other", nowMillis = 1_000L))
+    }
+
+    private fun mondayAt(hour: Int, minute: Int): ZonedDateTime =
+        ZonedDateTime.of(2026, 11, 16, hour, minute, 0, 0, ZoneOffset.UTC)
 }

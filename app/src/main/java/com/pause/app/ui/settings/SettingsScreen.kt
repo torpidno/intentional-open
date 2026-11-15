@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
+import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -28,21 +29,31 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,6 +76,8 @@ import com.pause.app.ui.components.StatusPill
 import com.pause.app.ui.theme.PauseDimens
 import com.pause.app.util.PermissionSnapshot
 import com.pause.app.util.PermissionType
+import java.time.DayOfWeek
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -255,6 +268,46 @@ fun SettingsScreen(
                 }
 
                 item {
+                    SchedulePreferenceCard(
+                        settings = state.settings,
+                        onEnabledChange = viewModel::setScheduleEnabled,
+                        onStartChange = { start ->
+                            viewModel.setScheduleWindow(
+                                startMinutes = start,
+                                endMinutes = state.settings.scheduleEndMinutes,
+                            )
+                        },
+                        onEndChange = { end ->
+                            viewModel.setScheduleWindow(
+                                startMinutes = state.settings.scheduleStartMinutes,
+                                endMinutes = end,
+                            )
+                        },
+                        onDayToggle = viewModel::toggleScheduleDay,
+                    )
+                }
+
+                item {
+                    PreferenceCard(
+                        title = stringResource(R.string.settings_retention_title),
+                        body = stringResource(R.string.settings_retention_body),
+                    ) {
+                        ChoiceChips(
+                            options = PauseSettings.HISTORY_RETENTION_OPTIONS,
+                            selected = state.settings.historyRetentionDays,
+                            label = { days ->
+                                if (days == 0) {
+                                    stringResource(R.string.settings_retention_forever)
+                                } else {
+                                    stringResource(R.string.settings_retention_days, days)
+                                }
+                            },
+                            onSelect = viewModel::setHistoryRetentionDays,
+                        )
+                    }
+                }
+
+                item {
                     PrivacyCard()
                 }
 
@@ -426,6 +479,155 @@ private fun PreferenceCard(
         Spacer(Modifier.height(PauseDimens.space16))
         content()
     }
+}
+
+private enum class ScheduleTimeField { START, END }
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun SchedulePreferenceCard(
+    settings: PauseSettings,
+    onEnabledChange: (Boolean) -> Unit,
+    onStartChange: (Int) -> Unit,
+    onEndChange: (Int) -> Unit,
+    onDayToggle: (DayOfWeek) -> Unit,
+) {
+    var editing by remember { mutableStateOf<ScheduleTimeField?>(null) }
+
+    PreferenceCard(
+        title = stringResource(R.string.settings_schedule_title),
+        body = stringResource(R.string.settings_schedule_body),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.settings_schedule_enabled),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = settings.scheduleEnabled,
+                onCheckedChange = onEnabledChange,
+            )
+        }
+
+        if (settings.scheduleEnabled) {
+            Spacer(Modifier.height(PauseDimens.space16))
+            Row(horizontalArrangement = Arrangement.spacedBy(PauseDimens.space8)) {
+                OutlinedButton(onClick = { editing = ScheduleTimeField.START }) {
+                    Text(
+                        text = stringResource(
+                            R.string.settings_schedule_start,
+                            formatScheduleMinutes(settings.scheduleStartMinutes),
+                        ),
+                    )
+                }
+                OutlinedButton(onClick = { editing = ScheduleTimeField.END }) {
+                    Text(
+                        text = stringResource(
+                            R.string.settings_schedule_end,
+                            formatScheduleMinutes(settings.scheduleEndMinutes),
+                        ),
+                    )
+                }
+            }
+            Spacer(Modifier.height(PauseDimens.space16))
+            Text(
+                text = stringResource(R.string.settings_schedule_days),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(PauseDimens.space8))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+                verticalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+            ) {
+                DayOfWeek.entries.forEach { day ->
+                    val selected = day in settings.scheduleDays
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onDayToggle(day) },
+                        enabled = !(selected && settings.scheduleDays.size == 1),
+                        label = { Text(stringResource(day.labelRes())) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(PauseDimens.space8))
+            Text(
+                text = stringResource(R.string.settings_schedule_overnight),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    editing?.let { field ->
+        key(field) {
+            val isStart = field == ScheduleTimeField.START
+            ScheduleTimeDialog(
+                title = stringResource(
+                    if (isStart) R.string.settings_schedule_start_title
+                    else R.string.settings_schedule_end_title,
+                ),
+                initialMinutes = if (isStart) {
+                    settings.scheduleStartMinutes
+                } else {
+                    settings.scheduleEndMinutes
+                },
+                onDismiss = { editing = null },
+                onConfirm = { minutes ->
+                    if (isStart) onStartChange(minutes) else onEndChange(minutes)
+                    editing = null
+                },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScheduleTimeDialog(
+    title: String,
+    initialMinutes: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit,
+) {
+    val context = LocalContext.current
+    val state = rememberTimePickerState(
+        initialHour = initialMinutes / 60,
+        initialMinute = initialMinutes % 60,
+        is24Hour = DateFormat.is24HourFormat(context),
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { TimePicker(state = state) },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(state.hour * 60 + state.minute) }) {
+                Text(stringResource(R.string.settings_schedule_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.settings_schedule_cancel))
+            }
+        },
+    )
+}
+
+private fun formatScheduleMinutes(minutes: Int): String {
+    val normalized = minutes.coerceIn(0, PauseSettings.MINUTES_PER_DAY - 1)
+    return String.format(Locale.getDefault(), "%02d:%02d", normalized / 60, normalized % 60)
+}
+
+private fun DayOfWeek.labelRes(): Int = when (this) {
+    DayOfWeek.MONDAY -> R.string.day_monday
+    DayOfWeek.TUESDAY -> R.string.day_tuesday
+    DayOfWeek.WEDNESDAY -> R.string.day_wednesday
+    DayOfWeek.THURSDAY -> R.string.day_thursday
+    DayOfWeek.FRIDAY -> R.string.day_friday
+    DayOfWeek.SATURDAY -> R.string.day_saturday
+    DayOfWeek.SUNDAY -> R.string.day_sunday
 }
 
 @Composable

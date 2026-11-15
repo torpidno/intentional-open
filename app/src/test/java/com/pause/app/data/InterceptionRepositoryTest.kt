@@ -138,6 +138,56 @@ class InterceptionRepositoryTest {
     }
 
     @Test
+    fun `archive exports every row and import round-trips it`() = runTest {
+        dao.insert(
+            InterventionLogEntity(
+                packageName = INSTAGRAM,
+                appLabel = "Instagram",
+                timestampMillis = 1_000L,
+                outcome = InterventionOutcome.WALKED_AWAY,
+                frictionMode = FrictionMode.INTENTION,
+                frictionModeSequence = "INTENTION",
+            ),
+        )
+        dao.insert(
+            InterventionLogEntity(
+                packageName = TIKTOK,
+                appLabel = "TikTok",
+                timestampMillis = 2_000L,
+                outcome = InterventionOutcome.PROCEEDED,
+                frictionMode = FrictionMode.TIME_LIMIT,
+                frictionModeSequence = "TIME_LIMIT,BREATHING",
+                intention = "Watch one video",
+                sessionLimitMinutes = 15,
+            ),
+        )
+
+        val exported = repository.exportHistory()
+
+        assertEquals(2, exported.size)
+        assertEquals(listOf(INSTAGRAM, TIKTOK), exported.map { it.packageName })
+        assertEquals(
+            listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING),
+            exported[1].frictionModes,
+        )
+
+        assertEquals(2, repository.importHistory(exported))
+        assertEquals(4, repository.exportHistory().size)
+    }
+
+    @Test
+    fun `retention deletion and clear history remove old rows`() = runTest {
+        insert(INSTAGRAM, "Instagram", 1_000L, InterventionOutcome.WALKED_AWAY)
+        insert(TIKTOK, "TikTok", 2_000L, InterventionOutcome.PROCEEDED)
+
+        repository.deleteHistoryBefore(cutoffMillis = 1_500L)
+
+        assertEquals(listOf(TIKTOK), repository.exportHistory().map { it.packageName })
+        repository.clearHistory()
+        assertEquals(0, repository.exportHistory().size)
+    }
+
+    @Test
     fun `empty database reports zero and no most triggered app`() = runTest {
         val stats = repository.observeTodayStats().first()
 

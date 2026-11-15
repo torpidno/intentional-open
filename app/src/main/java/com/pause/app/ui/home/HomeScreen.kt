@@ -28,8 +28,11 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
+import android.text.format.DateFormat
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -43,12 +46,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -74,6 +79,8 @@ import com.pause.app.ui.components.summary
 import com.pause.app.ui.theme.LocalPauseSemanticColors
 import com.pause.app.ui.theme.PauseDimens
 import com.pause.app.util.PermissionSnapshot
+import java.util.Date
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -186,6 +193,12 @@ fun HomeScreen(
                             },
                             onModeChange = { modes ->
                                 viewModel.setAppModeOverride(app.packageName, modes)
+                            },
+                            onSnooze = { minutes ->
+                                viewModel.snoozeApp(app.packageName, minutes)
+                            },
+                            onClearSnooze = {
+                                viewModel.clearAppSnooze(app.packageName)
                             },
                         )
                     }
@@ -425,11 +438,30 @@ private fun MonitoredAppCard(
     defaultModes: List<FrictionMode>,
     onPausedChange: (Boolean) -> Unit,
     onModeChange: (List<FrictionMode>?) -> Unit,
+    onSnooze: (Int) -> Unit,
+    onClearSnooze: () -> Unit,
 ) {
     var dialogOpen by remember { mutableStateOf(false) }
+    var snoozeMenuOpen by remember { mutableStateOf(false) }
     val defaultModeLabel = defaultModes.summary()
     val overrideModes = app.modeOverride
     val switchDescription = stringResource(R.string.cd_app_pause_switch, app.label)
+    val context = LocalContext.current
+    val snoozedUntil = app.snoozedUntilMillis
+    val snoozeTime = remember(snoozedUntil, context) {
+        snoozedUntil?.let { DateFormat.getTimeFormat(context).format(Date(it)) }
+    }
+
+    // Snoozes expire without an alarm. Clear the stored deadline when the
+    // countdown ends so the card returns to its normal state and the menu is
+    // correct if the process was asleep.
+    LaunchedEffect(snoozedUntil) {
+        if (snoozedUntil != null) {
+            val remaining = snoozedUntil - System.currentTimeMillis()
+            if (remaining > 0L) delay(remaining)
+            onClearSnooze()
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -494,6 +526,50 @@ private fun MonitoredAppCard(
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp),
                                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(PauseDimens.space4))
+                Box {
+                    TextButton(
+                        onClick = { snoozeMenuOpen = true },
+                        modifier = Modifier.heightIn(min = 40.dp),
+                    ) {
+                        Text(
+                            text = if (snoozeTime != null) {
+                                stringResource(R.string.home_snoozed_until, snoozeTime)
+                            } else {
+                                stringResource(R.string.home_snooze)
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = snoozeMenuOpen,
+                        onDismissRequest = { snoozeMenuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.home_snooze_15)) },
+                            onClick = {
+                                snoozeMenuOpen = false
+                                onSnooze(15)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.home_snooze_60)) },
+                            onClick = {
+                                snoozeMenuOpen = false
+                                onSnooze(60)
+                            },
+                        )
+                        if (snoozedUntil != null) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.home_snooze_resume)) },
+                                onClick = {
+                                    snoozeMenuOpen = false
+                                    onClearSnooze()
+                                },
                             )
                         }
                     }

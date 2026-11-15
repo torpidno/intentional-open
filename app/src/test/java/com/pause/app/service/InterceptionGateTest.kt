@@ -3,6 +3,10 @@ package com.pause.app.service
 import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.util.FakeTimeSource
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -136,12 +140,49 @@ class InterceptionGateTest {
         assertFalse(cooldownTracker.isCoolingDown(TIKTOK))
     }
 
+    @Test
+    fun `a snoozed app is skipped until its deadline`() {
+        val now = 1_000_000L
+        val settings = pauseSettings().copy(
+            snoozedUntilMillis = mapOf(INSTAGRAM to now + 1_000L),
+        )
+
+        assertEquals(
+            InterceptionDecision.SNOOZED,
+            decide(settings = settings, gate = gateAt(now)),
+        )
+        assertEquals(
+            InterceptionDecision.INTERCEPT,
+            decide(settings = settings, gate = gateAt(now + 1_000L)),
+        )
+    }
+
+    @Test
+    fun `an app outside the active hours is skipped`() {
+        val settings = pauseSettings().copy(
+            scheduleEnabled = true,
+            scheduleDays = setOf(java.time.DayOfWeek.MONDAY),
+            scheduleStartMinutes = 9 * 60,
+            scheduleEndMinutes = 17 * 60,
+        )
+
+        assertEquals(
+            InterceptionDecision.INTERCEPT,
+            decide(settings = settings, gate = gateAt(mondayAt(hour = 10))),
+        )
+        assertEquals(
+            InterceptionDecision.OUTSIDE_SCHEDULE,
+            decide(settings = settings, gate = gateAt(mondayAt(hour = 18))),
+        )
+    }
+
     private fun decide(
         packageName: String = INSTAGRAM,
         settings: PauseSettings = pauseSettings(),
         ignoredPackages: Set<String> = emptySet(),
         isDeviceInteractive: Boolean = true,
         isDeviceLocked: Boolean = false,
+        gate: InterceptionGate = this.gate,
     ): InterceptionDecision = gate.decide(
         packageName = packageName,
         settings = settings,
@@ -149,6 +190,18 @@ class InterceptionGateTest {
         isDeviceInteractive = isDeviceInteractive,
         isDeviceLocked = isDeviceLocked,
     )
+
+    private fun gateAt(nowMillis: Long): InterceptionGate =
+        InterceptionGate(
+            cooldownTracker = cooldownTracker,
+            timeSource = time,
+            clock = Clock.fixed(Instant.ofEpochMilli(nowMillis), ZoneOffset.UTC),
+        )
+
+    private fun mondayAt(hour: Int): Long =
+        ZonedDateTime.of(2026, 11, 16, hour, 0, 0, 0, ZoneOffset.UTC)
+            .toInstant()
+            .toEpochMilli()
 
     private fun pauseSettings(
         enabled: Boolean = true,

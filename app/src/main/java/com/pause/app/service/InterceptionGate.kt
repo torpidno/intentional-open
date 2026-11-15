@@ -2,6 +2,7 @@ package com.pause.app.service
 
 import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.util.TimeSource
+import java.time.Clock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,6 +28,12 @@ enum class InterceptionDecision {
 
     /** A duplicate window event from the launch that was just handled. */
     DUPLICATE_EVENT,
+
+    /** The app is temporarily snoozed by the user. */
+    SNOOZED,
+
+    /** The global active-hours schedule is outside its configured window. */
+    OUTSIDE_SCHEDULE,
 }
 
 /**
@@ -47,6 +54,7 @@ enum class InterceptionDecision {
 class InterceptionGate @Inject constructor(
     private val cooldownTracker: CooldownTracker,
     private val timeSource: TimeSource,
+    private val clock: Clock = Clock.systemDefaultZone(),
 ) {
 
     private var lastHandledPackage: String? = null
@@ -62,6 +70,12 @@ class InterceptionGate @Inject constructor(
         if (packageName in ignoredPackages) return InterceptionDecision.IGNORED_PACKAGE
         if (!settings.isEnabled) return InterceptionDecision.DISABLED
         if (!settings.isMonitored(packageName)) return InterceptionDecision.NOT_MONITORED
+        if (settings.isSnoozed(packageName, clock.millis())) {
+            return InterceptionDecision.SNOOZED
+        }
+        if (!settings.isScheduleActive(clock.instant().atZone(clock.zone))) {
+            return InterceptionDecision.OUTSIDE_SCHEDULE
+        }
         if (!isDeviceInteractive || isDeviceLocked) return InterceptionDecision.DEVICE_UNAVAILABLE
 
         val now = timeSource.elapsedRealtimeMillis()

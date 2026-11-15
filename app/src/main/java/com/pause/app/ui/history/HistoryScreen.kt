@@ -1,5 +1,7 @@
 package com.pause.app.ui.history
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,25 +22,35 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pause.app.R
+import com.pause.app.data.export.HistoryCsv
 import com.pause.app.domain.model.InterventionOutcome
 import com.pause.app.ui.components.AppGlyph
 import com.pause.app.ui.components.ChoiceChips
@@ -46,6 +59,9 @@ import com.pause.app.ui.components.PrivacyFooter
 import com.pause.app.ui.components.summary
 import com.pause.app.ui.theme.LocalPauseSemanticColors
 import com.pause.app.ui.theme.PauseDimens
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,9 +70,79 @@ fun HistoryScreen(
     viewModel: HistoryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showClearConfirmation by remember { mutableStateOf(false) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(HistoryCsv.MIME_TYPE),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val csv = runCatching { viewModel.exportCsv() }.getOrElse {
+                    snackbarHostState.showSnackbar(
+                        context.getString(R.string.history_export_failed),
+                    )
+                    return@launch
+                }
+                val written = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { stream ->
+                            stream.write(csv.toByteArray(Charsets.UTF_8))
+                        } ?: error("No output stream")
+                    }.isSuccess
+                }
+                snackbarHostState.showSnackbar(
+                    context.getString(
+                        if (written) R.string.history_export_success
+                        else R.string.history_export_failed,
+                    ),
+                )
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val csv = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            stream.reader(Charsets.UTF_8).readText()
+                        }
+                    }.getOrNull()
+                }
+                if (csv == null) {
+                    snackbarHostState.showSnackbar(
+                        context.getString(R.string.history_import_failed),
+                    )
+                    return@launch
+                }
+                val imported = runCatching {
+                    withContext(Dispatchers.IO) { viewModel.importCsv(csv) }
+                }.getOrElse {
+                    snackbarHostState.showSnackbar(
+                        context.getString(R.string.history_import_failed),
+                    )
+                    return@launch
+                }
+                snackbarHostState.showSnackbar(
+                    if (imported == 0) {
+                        context.getString(R.string.history_import_empty)
+                    } else {
+                        context.getString(R.string.history_import_success, imported)
+                    },
+                )
+            }
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 navigationIcon = {
@@ -68,6 +154,20 @@ fun HistoryScreen(
                     }
                 },
                 title = { Text(stringResource(R.string.history_title)) },
+                actions = {
+                    TextButton(onClick = { exportLauncher.launch(HistoryCsv.FILE_NAME) }) {
+                        Text(stringResource(R.string.history_export_action))
+                    }
+                    TextButton(
+                        onClick = {
+                            importLauncher.launch(
+                                arrayOf("text/csv", "text/comma-separated-values", "text/plain"),
+                            )
+                        },
+                    ) {
+                        Text(stringResource(R.string.history_import_action))
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -115,11 +215,65 @@ fun HistoryScreen(
                     }
                 }
 
+                if (state.totalCount > 0) {
+                    item {
+                        TextButton(
+                            onClick = { showClearConfirmation = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = PauseDimens.touchTarget),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.history_clear_action),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+
                 item {
                     PrivacyFooter(modifier = Modifier.padding(top = PauseDimens.space8))
                 }
             }
         }
+    }
+
+    if (showClearConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirmation = false },
+            title = { Text(stringResource(R.string.history_clear_title)) },
+            text = { Text(stringResource(R.string.history_clear_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearConfirmation = false
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) { viewModel.clearHistory() }
+                            }.onSuccess {
+                                snackbarHostState.showSnackbar(
+                                    context.getString(R.string.history_clear_success),
+                                )
+                            }.onFailure {
+                                snackbarHostState.showSnackbar(
+                                    context.getString(R.string.history_clear_failed),
+                                )
+                            }
+                        }
+                    },
+                ) {
+                    Text(
+                        text = stringResource(R.string.history_clear_confirm),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmation = false }) {
+                    Text(stringResource(R.string.history_clear_cancel))
+                }
+            },
+        )
     }
 }
 
