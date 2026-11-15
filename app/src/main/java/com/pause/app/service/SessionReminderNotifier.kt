@@ -1,6 +1,7 @@
 package com.pause.app.service
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -58,6 +59,18 @@ class SessionReminderNotifier @Inject constructor(
             .setContentIntent(contentIntent)
             .build()
 
+        post(notification)
+    }
+
+    private fun post(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         runCatching {
             NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
         }

@@ -6,13 +6,14 @@
         these themes is to set a matching window background before the first
         frame and to let the app draw edge-to-edge without an action bar.
     -->
-    <style name="Theme.Pause" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Pause.Base" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/pause_window_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
     </style>
+
+    <style name="Theme.Pause" parent="Theme.Pause.Base" />
 
     <!-- The intervention surface is intentionally dark in light and dark mode. -->
     <style name="Theme.Pause.Intervention" parent="android:Theme.Material.NoActionBar">
@@ -20,6 +21,5 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>

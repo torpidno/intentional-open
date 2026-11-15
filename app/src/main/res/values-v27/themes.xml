@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- windowLightNavigationBar was added in API 27; keep the base theme free
+         of it so API 26 stays lint-clean and falls back to the platform default. -->
+    <style name="Theme.Pause" parent="Theme.Pause.Base">
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>
