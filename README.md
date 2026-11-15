@@ -164,6 +164,9 @@ Requires a booted API 26+ emulator (API 35 recommended) with the English locale.
   intention and time-limit modes. It verifies the Continue CTA is locked until
   its condition is met, that walking away returns Home and records a
   `WALKED_AWAY` row, and that an intention or time limit unlocks Continue.
+- `InterventionErrorDialogInstrumentedTest` renders the session-start error
+  dialog with Compose on-device and verifies its modal semantics, Retry and
+  Keep app closed actions, and focus on the dialog actions.
 - `AccessibilityInterceptionInstrumentedTest` enables the real accessibility
   service, monitors the system Settings app, opens it, verifies the pause screen
   appears over it, closes the pause and checks the Room log.
