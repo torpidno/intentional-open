@@ -3,6 +3,7 @@ package com.pause.app.ui
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -63,6 +64,7 @@ class InterventionErrorDialogInstrumentedTest {
 
         composeRule.onNodeWithText(KEEP_CLOSED).requestFocus()
         composeRule.onNodeWithText(KEEP_CLOSED).assertIsFocused()
+        composeRule.onNodeWithText(CONTINUE).assertIsNotFocused()
 
         // Read the semantic focus flags directly so a platform focus change
         // cannot silently move focus outside the dialog.
@@ -109,5 +111,6 @@ class InterventionErrorDialogInstrumentedTest {
         const val ERROR_TITLE = "Couldn't start your session"
         const val RETRY = "Retry"
         const val KEEP_CLOSED = "Keep app closed"
+        const val CONTINUE = "Continue to $APP_LABEL"
     }
 }
