@@ -70,6 +70,41 @@ class InterventionViewModelTest {
     }
 
     @Test
+    fun `restores the current step and selections after process death`() = runTest(dispatcher) {
+        val persistence = GatedSessionPersistence(CompletableDeferred())
+        val manager = manager(persistence, this)
+        val modes = listOf(FrictionMode.INTENTION, FrictionMode.TIME_LIMIT)
+        val handle = SavedStateHandle(
+            mapOf(
+                PauseInterventionActivity.EXTRA_PACKAGE_NAME to context.packageName,
+                PauseInterventionActivity.EXTRA_FRICTION_MODES to
+                    ArrayList(modes.map { it.name }),
+            ),
+        )
+        val first = viewModel(manager, modes, handle)
+
+        runCurrent()
+        first.selectReason("Check a message")
+        first.updateNote("A note")
+        first.continueToTargetApp()
+        first.selectSessionLimit(15)
+
+        assertEquals(FrictionMode.TIME_LIMIT, first.uiState.value.mode)
+        assertEquals(1, first.uiState.value.stepIndex)
+
+        // A new ViewModel with the same SavedStateHandle simulates process death
+        // and activity recreation.
+        val restored = viewModel(manager, modes, handle).uiState.value
+
+        assertEquals(FrictionMode.TIME_LIMIT, restored.mode)
+        assertEquals(1, restored.stepIndex)
+        assertEquals("Check a message", restored.selectedReason)
+        assertEquals("A note", restored.note)
+        assertEquals(15, restored.selectedLimitMinutes)
+        assertTrue(restored.isUnlocked)
+    }
+
+    @Test
     fun `target app waits until the session deadline is persisted`() = runTest(dispatcher) {
         val gate = CompletableDeferred<Unit>()
         val persistence = GatedSessionPersistence(gate)
@@ -148,7 +183,17 @@ class InterventionViewModelTest {
         clock = clock,
     )
 
-    private fun TestScope.viewModel(manager: SessionLimitManager): InterventionViewModel {
+    private fun TestScope.viewModel(
+        manager: SessionLimitManager,
+        modes: List<FrictionMode> = listOf(FrictionMode.TIME_LIMIT),
+        savedStateHandle: SavedStateHandle = SavedStateHandle(
+            mapOf(
+                PauseInterventionActivity.EXTRA_PACKAGE_NAME to context.packageName,
+                PauseInterventionActivity.EXTRA_FRICTION_MODES to
+                    ArrayList(modes.map { it.name }),
+            ),
+        ),
+    ): InterventionViewModel {
         val settings = SettingsRepository(
             dataStore = FakePreferencesDataStore(),
             scope = backgroundScope,
@@ -162,13 +207,7 @@ class InterventionViewModelTest {
             clock = clock,
         )
         return InterventionViewModel(
-            savedStateHandle = SavedStateHandle(
-                mapOf(
-                    PauseInterventionActivity.EXTRA_PACKAGE_NAME to context.packageName,
-                    PauseInterventionActivity.EXTRA_FRICTION_MODES to
-                        arrayListOf(FrictionMode.TIME_LIMIT.name),
-                ),
-            ),
+            savedStateHandle = savedStateHandle,
             settingsRepository = settings,
             installedAppsRepository = installedApps,
             interceptionRepository = interception,

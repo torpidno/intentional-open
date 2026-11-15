@@ -132,7 +132,9 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
   replacement, durable persistence, failure cleanup and restart restoration.
 - `InterventionViewModelTest` — a gated persistence write proves the target-app
   effect waits for success; a failed write keeps the app closed, exposes the
-  retry state and launches only after a successful retry.
+  retry state and launches only after a successful retry. It also recreates the
+  ViewModel from `SavedStateHandle` to prove the step, intention and limit
+  survive process death.
 - `PauseSettingsTest` — ordered/deduplicated default sequences, per-app
   sequences, and the empty-sequence fallback.
 - `InterceptionRepositoryTest` — Robolectric + in-memory Room coverage of the
@@ -225,9 +227,10 @@ app/src/debug/java/com/pause/app/testing/
 - Android may restrict background activity starts from the service if the
   overlay permission is missing; the accessibility-service route plus the
   overlay grant is the reliable combination.
-- Session timers are persisted and restored after process death or reboot. A
-  local notification is the fallback; Android can still cancel alarms after a
-  force-stop or apply OEM-specific background restrictions.
+- Session timers and the current pause step/selections are persisted and
+  restored after process death. A local notification is the fallback for a
+  session reminder; Android can still cancel alarms after a force-stop or apply
+  OEM-specific background restrictions.
 - If a chosen session deadline cannot be persisted, Pause does not open the
   target app. The pause screen shows an error with Retry and Keep app closed
   actions; retry persists again before any launch.

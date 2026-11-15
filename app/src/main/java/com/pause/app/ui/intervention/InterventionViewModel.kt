@@ -71,7 +71,7 @@ data class InterventionUiState(
 
 @HiltViewModel
 class InterventionViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val settingsRepository: SettingsRepository,
     private val installedAppsRepository: InstalledAppsRepository,
     private val interceptionRepository: InterceptionRepository,
@@ -91,6 +91,21 @@ class InterventionViewModel @Inject constructor(
 
     /** Used for the attempt log, which still has one representative mode. */
     private val primaryMode: FrictionMode = modes.first()
+
+    /**
+     * Restore the exact step, not just the first mode. Matching by mode name
+     * also keeps a saved pause understandable if a future release reorders the
+     * sequence while the process is dead.
+     */
+    private val restoredStepIndex: Int = savedStateHandle.get<String>(KEY_MODE)
+        ?.let { name -> modes.indexOfFirst { it.name == name }.takeIf { it >= 0 } }
+        ?: (savedStateHandle.get<Int>(KEY_STEP_INDEX) ?: 0)
+            .coerceIn(0, modes.lastIndex)
+    private val restoredMode: FrictionMode = modes[restoredStepIndex]
+    private val restoredReason: String? = savedStateHandle.get<String>(KEY_SELECTED_REASON)
+    private val restoredNote: String = savedStateHandle.get<String>(KEY_NOTE).orEmpty()
+    private val restoredLimit: Int? = savedStateHandle.get<Int>(KEY_SELECTED_LIMIT)
+        ?.takeIf { it in PauseSettings.SESSION_LIMIT_OPTIONS }
 
     private val appLabel: String = if (packageName.isBlank()) {
         ""
@@ -122,28 +137,37 @@ class InterventionViewModel @Inject constructor(
         }
 
     private val initialRemainingMillis: Long =
-        if (primaryMode == FrictionMode.BREATHING) {
+        if (restoredMode == FrictionMode.BREATHING) {
             (pauseEndsAtMillis - clock.millis()).coerceAtLeast(0L)
         } else {
             0L
         }
 
+    private val initialUnlocked: Boolean = when (restoredMode) {
+        FrictionMode.BREATHING -> initialRemainingMillis == 0L
+        FrictionMode.INTENTION -> restoredReason != null || restoredNote.isNotBlank()
+        FrictionMode.TIME_LIMIT -> restoredLimit != null
+    }
+
     private val _uiState = MutableStateFlow(
         InterventionUiState(
             packageName = packageName,
             appLabel = appLabel,
-            mode = primaryMode,
+            mode = restoredMode,
             modeCount = modes.size,
-            stepIndex = 0,
+            stepIndex = restoredStepIndex,
             breathingSeconds = breathingSeconds,
             remainingMillis = initialRemainingMillis,
-            breathProgress = if (primaryMode == FrictionMode.BREATHING) {
+            breathProgress = if (restoredMode == FrictionMode.BREATHING) {
                 (1f - initialRemainingMillis.toFloat() / (breathingSeconds * 1_000f))
                     .coerceIn(0f, 1f)
             } else {
                 0f
             },
-            isUnlocked = primaryMode == FrictionMode.BREATHING && initialRemainingMillis == 0L,
+            isUnlocked = initialUnlocked,
+            selectedReason = restoredReason,
+            note = restoredNote,
+            selectedLimitMinutes = restoredLimit,
         ),
     )
     val uiState: StateFlow<InterventionUiState> = _uiState.asStateFlow()
@@ -159,7 +183,7 @@ class InterventionViewModel @Inject constructor(
                 it.copy(appIcon = installedAppsRepository.loadIconFor(packageName))
             }
         }
-        if (primaryMode == FrictionMode.BREATHING) {
+        if (restoredMode == FrictionMode.BREATHING) {
             startBreathingTimer()
         }
     }
@@ -191,6 +215,7 @@ class InterventionViewModel @Inject constructor(
             val next = if (state.selectedReason == reason) null else reason
             state.copy(selectedReason = next).withIntentionUnlock()
         }
+        persistPauseProgress()
     }
 
     fun updateNote(note: String) {
@@ -199,6 +224,7 @@ class InterventionViewModel @Inject constructor(
             state.copy(note = note.take(PauseSettings.MAX_INTENTION_LENGTH))
                 .withIntentionUnlock()
         }
+        persistPauseProgress()
     }
 
     fun selectSessionLimit(minutes: Int) {
@@ -207,6 +233,7 @@ class InterventionViewModel @Inject constructor(
         _uiState.update {
             it.copy(selectedLimitMinutes = minutes).withIntentionUnlock()
         }
+        persistPauseProgress()
     }
 
     fun continueToTargetApp() {
@@ -296,6 +323,17 @@ class InterventionViewModel @Inject constructor(
                 isUnlocked = nextUnlocked,
             )
         }
+        persistPauseProgress()
+    }
+
+    /** Keeps the visible step and selections across process death. */
+    private fun persistPauseProgress() {
+        val state = _uiState.value
+        savedStateHandle[KEY_STEP_INDEX] = state.stepIndex
+        savedStateHandle[KEY_MODE] = state.mode.name
+        savedStateHandle[KEY_SELECTED_REASON] = state.selectedReason
+        savedStateHandle[KEY_NOTE] = state.note
+        savedStateHandle[KEY_SELECTED_LIMIT] = state.selectedLimitMinutes
     }
 
     fun walkAway() {
@@ -347,6 +385,11 @@ class InterventionViewModel @Inject constructor(
     private companion object {
         const val KEY_ATTEMPT_ID = "attempt_id"
         const val KEY_PAUSE_ENDS_AT = "pause_ends_at"
+        const val KEY_STEP_INDEX = "step_index"
+        const val KEY_MODE = "mode"
+        const val KEY_SELECTED_REASON = "selected_reason"
+        const val KEY_NOTE = "note"
+        const val KEY_SELECTED_LIMIT = "selected_limit"
         const val TICK_MILLIS = 50L
     }
 }
