@@ -30,10 +30,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -58,16 +56,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pause.app.BuildConfig
 import com.pause.app.R
 import com.pause.app.data.preferences.PauseSettings
-import com.pause.app.domain.model.FrictionMode
 import com.pause.app.ui.components.ChoiceChips
+import com.pause.app.ui.components.FrictionSequenceEditor
 import com.pause.app.ui.components.PauseCard
 import com.pause.app.ui.components.PrivacyFooter
 import com.pause.app.ui.components.SectionHeader
 import com.pause.app.ui.components.StatusPill
-import com.pause.app.ui.components.descriptionRes
-import com.pause.app.ui.components.label
-import com.pause.app.ui.components.labelRes
-import com.pause.app.ui.components.pauseClickable
 import com.pause.app.ui.theme.PauseDimens
 import com.pause.app.util.PermissionSnapshot
 import com.pause.app.util.PermissionType
@@ -246,50 +240,11 @@ fun SettingsScreen(
                         title = stringResource(R.string.settings_default_mode_title),
                         body = stringResource(R.string.settings_default_mode_body),
                     ) {
-                        val selectedModes = state.settings.defaultFrictionModes
-                        FrictionMode.entries.forEachIndexed { index, mode ->
-                            if (index > 0) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(horizontal = PauseDimens.space8),
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                                )
-                            }
-                            val selected = mode in selectedModes
-                            val onlySelected = selected && selectedModes.size == 1
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .pauseClickable(
-                                        shape = MaterialTheme.shapes.medium,
-                                        enabled = !onlySelected,
-                                        minHeight = 64.dp,
-                                        onClick = { viewModel.toggleDefaultFrictionMode(mode) },
-                                    )
-                                    .padding(
-                                        horizontal = PauseDimens.space8,
-                                        vertical = PauseDimens.space8,
-                                    ),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Checkbox(
-                                    checked = selected,
-                                    onCheckedChange = { viewModel.toggleDefaultFrictionMode(mode) },
-                                    enabled = !onlySelected,
-                                )
-                                Spacer(Modifier.width(PauseDimens.space8))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = stringResource(mode.labelRes()),
-                                        style = MaterialTheme.typography.titleSmall,
-                                    )
-                                    Text(
-                                        text = stringResource(mode.descriptionRes()),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                        }
+                        FrictionSequenceEditor(
+                            selectedModes = state.settings.defaultFrictionModes,
+                            onToggle = viewModel::toggleDefaultFrictionMode,
+                            onMove = viewModel::moveDefaultFrictionMode,
+                        )
                         Spacer(Modifier.height(PauseDimens.space8))
                         Text(
                             text = stringResource(R.string.settings_default_mode_minimum),

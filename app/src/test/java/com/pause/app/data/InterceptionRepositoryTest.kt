@@ -131,7 +131,7 @@ class InterceptionRepositoryTest {
 
         val entry = repository.observeHistory().first().single()
 
-        assertEquals(listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT), entry.frictionModes)
+        assertEquals(listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING), entry.frictionModes)
         assertEquals(InterventionOutcome.PROCEEDED, entry.outcome)
         assertEquals("Check a message", entry.intention)
         assertEquals(15, entry.sessionLimitMinutes)

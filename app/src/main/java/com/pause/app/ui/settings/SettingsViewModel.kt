@@ -75,4 +75,8 @@ class SettingsViewModel @Inject constructor(
     fun toggleDefaultFrictionMode(mode: FrictionMode) {
         viewModelScope.launch { settingsRepository.toggleDefaultFrictionMode(mode) }
     }
+
+    fun moveDefaultFrictionMode(mode: FrictionMode, offset: Int) {
+        viewModelScope.launch { settingsRepository.moveDefaultFrictionMode(mode, offset) }
+    }
 }

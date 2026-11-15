@@ -422,6 +422,5 @@ private fun readModes(savedStateHandle: SavedStateHandle): List<FrictionMode> {
 
     return encoded.ifEmpty { listOfNotNull(legacy) }
         .distinct()
-        .sortedBy { it.ordinal }
         .ifEmpty { listOf(FrictionMode.BREATHING) }
 }

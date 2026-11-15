@@ -1,6 +1,7 @@
 package com.pause.app.data.preferences
 
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -10,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.pause.app.di.ApplicationScope
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.moveFrictionMode
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -68,9 +70,7 @@ class SettingsRepository @Inject constructor(
         val normalized = normalizeFrictionModes(modes)
         if (normalized.isEmpty()) return
         dataStore.edit { preferences ->
-            preferences[Keys.DEFAULT_FRICTION_MODES] = normalized.map { it.name }.toSet()
-            // Keep the legacy key in sync for downgrade/import paths.
-            preferences[Keys.DEFAULT_FRICTION_MODE] = normalized.first().name
+            preferences.writeDefaultFrictionModes(normalized)
         }
     }
 
@@ -80,9 +80,18 @@ class SettingsRepository @Inject constructor(
             val current = preferences.defaultFrictionModes()
             val next = if (mode in current) current - mode else current + mode
             if (next.isEmpty()) return@edit
-            val normalized = normalizeFrictionModes(next)
-            preferences[Keys.DEFAULT_FRICTION_MODES] = normalized.map { it.name }.toSet()
-            preferences[Keys.DEFAULT_FRICTION_MODE] = normalized.first().name
+            preferences.writeDefaultFrictionModes(normalizeFrictionModes(next))
+        }
+    }
+
+    /** Moves a mode by one position in the global sequence. */
+    suspend fun moveDefaultFrictionMode(mode: FrictionMode, offset: Int) {
+        dataStore.edit { preferences ->
+            val current = preferences.defaultFrictionModes()
+            val moved = current.moveFrictionMode(mode, offset)
+            if (moved != current) {
+                preferences.writeDefaultFrictionModes(moved)
+            }
         }
     }
 
@@ -172,7 +181,7 @@ internal fun encodeOverrides(overrides: Map<String, List<FrictionMode>>): String
         }
         .sortedBy { it.first }
         .joinToString(ENTRY_SEPARATOR) { (packageName, modes) ->
-            "$packageName$VALUE_SEPARATOR${modes.joinToString(MODE_SEPARATOR) { it.name }}"
+            "$packageName$VALUE_SEPARATOR${encodeFrictionSequence(modes)}"
         }
 
 internal fun decodeOverrides(raw: String): Map<String, List<FrictionMode>> =
@@ -180,29 +189,53 @@ internal fun decodeOverrides(raw: String): Map<String, List<FrictionMode>> =
         .mapNotNull { entry ->
             val parts = entry.split(VALUE_SEPARATOR, limit = 2)
             if (parts.size != 2 || parts[0].isBlank()) return@mapNotNull null
-            val modes = parts[1].split(MODE_SEPARATOR)
-                .mapNotNull { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
-                .distinct()
-                .sortedBy { it.ordinal }
+            val modes = decodeFrictionSequence(parts[1])
             if (modes.isEmpty()) return@mapNotNull null
             parts[0] to modes
         }
         .toMap()
 
 private fun normalizeFrictionModes(modes: Collection<FrictionMode>): List<FrictionMode> =
-    modes.distinct().sortedBy { it.ordinal }
+    modes.distinct()
 
-/** Reads the new multi-mode key, falling back to the single-mode legacy key. */
+private fun encodeFrictionSequence(modes: List<FrictionMode>): String =
+    modes.joinToString(MODE_SEPARATOR) { it.name }
+
+private fun decodeFrictionSequence(raw: String?): List<FrictionMode> =
+    raw.orEmpty()
+        .split(MODE_SEPARATOR)
+        .mapNotNull { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
+        .distinct()
+
+/**
+ * Reads the ordered key first. Older installs only have the unordered set (or a
+ * single legacy mode), so those fall back to canonical order. The ordered list
+ * is the only representation written by current versions.
+ */
 private fun Preferences.defaultFrictionModes(): List<FrictionMode> {
-    val stored = this[Keys.DEFAULT_FRICTION_MODES].orEmpty()
+    decodeFrictionSequence(this[Keys.DEFAULT_FRICTION_SEQUENCE])
+        .takeIf { it.isNotEmpty() }
+        ?.let { return it }
+
+    val legacySet = this[Keys.DEFAULT_FRICTION_MODES].orEmpty()
         .mapNotNull { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
         .distinct()
         .sortedBy { it.ordinal }
-    if (stored.isNotEmpty()) return stored
+    if (legacySet.isNotEmpty()) return legacySet
 
     val legacy = this[Keys.DEFAULT_FRICTION_MODE]
         ?.let { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
     return listOfNotNull(legacy).ifEmpty { listOf(FrictionMode.BREATHING) }
+}
+
+private fun MutablePreferences.writeDefaultFrictionModes(
+    modes: List<FrictionMode>,
+) {
+    this[Keys.DEFAULT_FRICTION_SEQUENCE] = encodeFrictionSequence(modes)
+    // Keep the unordered keys in sync for downgrade/import paths. The ordered
+    // key is authoritative because a StringSet cannot preserve sequence order.
+    this[Keys.DEFAULT_FRICTION_MODES] = modes.map { it.name }.toSet()
+    this[Keys.DEFAULT_FRICTION_MODE] = modes.first().name
 }
 
 private fun Preferences.toPauseSettings(): PauseSettings =
@@ -228,6 +261,7 @@ private object Keys {
     val BREATHING_SECONDS = intPreferencesKey("breathing_seconds")
     val DEFAULT_FRICTION_MODE = stringPreferencesKey("default_friction_mode")
     val DEFAULT_FRICTION_MODES = stringSetPreferencesKey("default_friction_modes")
+    val DEFAULT_FRICTION_SEQUENCE = stringPreferencesKey("default_friction_sequence")
     val MONITORED_PACKAGES = stringSetPreferencesKey("monitored_packages")
     val PAUSED_PACKAGES = stringSetPreferencesKey("paused_packages")
     val APP_MODE_OVERRIDES = stringPreferencesKey("app_mode_overrides")

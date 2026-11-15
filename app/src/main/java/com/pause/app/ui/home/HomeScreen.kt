@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -63,13 +62,13 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pause.app.R
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.moveFrictionMode
 import com.pause.app.ui.components.AppGlyph
+import com.pause.app.ui.components.FrictionSequenceEditor
 import com.pause.app.ui.components.PauseCard
 import com.pause.app.ui.components.PrivacyFooter
 import com.pause.app.ui.components.SectionHeader
 import com.pause.app.ui.components.StatTile
-import com.pause.app.ui.components.descriptionRes
-import com.pause.app.ui.components.label
 import com.pause.app.ui.components.pauseClickable
 import com.pause.app.ui.components.summary
 import com.pause.app.ui.theme.LocalPauseSemanticColors
@@ -563,59 +562,20 @@ private fun AppFrictionDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(PauseDimens.space8))
-                FrictionMode.entries.forEach { mode ->
-                    val checked = mode in selected
-                    val onlySelected = checked && selected.size == 1
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .pauseClickable(
-                                shape = MaterialTheme.shapes.medium,
-                                enabled = !onlySelected,
-                                minHeight = 56.dp,
-                                onClick = {
-                                    selected = if (checked) {
-                                        selected - mode
-                                    } else {
-                                        (selected + mode)
-                                            .distinct()
-                                            .sortedBy { it.ordinal }
-                                    }
-                                },
-                            )
-                            .padding(
-                                horizontal = PauseDimens.space8,
-                                vertical = PauseDimens.space8,
-                            ),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(
-                            checked = checked,
-                            onCheckedChange = {
-                                selected = if (checked) {
-                                    selected - mode
-                                } else {
-                                    (selected + mode)
-                                        .distinct()
-                                        .sortedBy { it.ordinal }
-                                }
-                            },
-                            enabled = !onlySelected,
-                        )
-                        Spacer(Modifier.width(PauseDimens.space8))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = mode.label(),
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                            Text(
-                                text = stringResource(mode.descriptionRes()),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                FrictionSequenceEditor(
+                    selectedModes = selected,
+                    onToggle = { mode ->
+                        selected = if (mode in selected) {
+                            selected - mode
+                        } else {
+                            (selected + mode).distinct()
                         }
-                    }
-                }
+                    },
+                    onMove = { mode, offset ->
+                        selected = selected.moveFrictionMode(mode, offset)
+                    },
+                    rowMinHeight = 56.dp,
+                )
                 Spacer(Modifier.height(PauseDimens.space8))
                 Text(
                     text = stringResource(R.string.settings_default_mode_minimum),

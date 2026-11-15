@@ -101,7 +101,10 @@
     <string name="settings_breathing_option">%1$d s</string>
     <string name="settings_default_mode_title">Default friction</string>
     <string name="settings_default_mode_body">Choose one or more. They run in the order shown.</string>
-    <string name="settings_default_mode_minimum">At least one friction stays on.</string>
+    <string name="settings_default_mode_minimum">At least one friction stays on. Use the arrows to change the order.</string>
+    <string name="friction_sequence_add_hint">Add another friction</string>
+    <string name="cd_move_friction_up">Move %1$s up</string>
+    <string name="cd_move_friction_down">Move %1$s down</string>
     <string name="settings_privacy_title">Privacy</string>
     <string name="settings_privacy_body">No internet permission. No analytics. No accounts. Settings and history are stored only in a local DataStore and Room database on this phone.</string>
     <string name="settings_about">Pause %1$s · Built with Jetpack Compose</string>

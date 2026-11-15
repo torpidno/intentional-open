@@ -12,7 +12,7 @@ data class PauseSettings(
     val isEnabled: Boolean = true,
     val cooldownMinutes: Int = DEFAULT_COOLDOWN_MINUTES,
     val breathingDurationSeconds: Int = DEFAULT_BREATHING_SECONDS,
-    /** Ordered set of frictions used for every app without an override. */
+    /** Ordered frictions used for every app without an override. */
     val defaultFrictionModes: List<FrictionMode> = listOf(FrictionMode.BREATHING),
     /** Every app the user selected in the app picker. */
     val monitoredPackages: Set<String> = emptySet(),
@@ -26,15 +26,13 @@ data class PauseSettings(
         packageName in monitoredPackages && packageName !in pausedPackages
 
     /**
-     * The effective friction sequence for an app, in canonical order:
-     * breathing -> intention -> session limit. An app override replaces the
-     * whole global sequence for that app.
+     * The effective friction sequence for an app, in the order the user chose.
+     * An app override replaces the whole global sequence for that app.
      */
     fun frictionModesFor(packageName: String): List<FrictionMode> {
         val override = appModeOverrides[packageName]?.takeIf { it.isNotEmpty() }
         val modes = override ?: defaultFrictionModes
-        return modes.distinct().sortedBy { it.ordinal }
-            .ifEmpty { listOf(FrictionMode.BREATHING) }
+        return modes.distinct().ifEmpty { listOf(FrictionMode.BREATHING) }
     }
 
     /** The first effective mode, for call sites that need one representative. */

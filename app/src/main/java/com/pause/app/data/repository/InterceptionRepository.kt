@@ -64,8 +64,7 @@ class InterceptionRepository @Inject constructor(
         appLabel: String,
         modes: List<FrictionMode>,
     ): Long {
-        val normalized = modes.distinct().sortedBy { it.ordinal }
-            .ifEmpty { listOf(FrictionMode.BREATHING) }
+        val normalized = modes.distinct().ifEmpty { listOf(FrictionMode.BREATHING) }
         return dao.insert(
             InterventionLogEntity(
                 packageName = packageName,
@@ -108,7 +107,6 @@ class InterceptionRepository @Inject constructor(
             ?.split(",")
             ?.mapNotNull { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
             ?.distinct()
-            ?.sortedBy { it.ordinal }
             ?.takeIf { it.isNotEmpty() }
             ?: listOf(frictionMode)
         return InterventionRecord(

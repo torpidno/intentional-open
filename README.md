@@ -72,7 +72,14 @@ Pause needs four system permissions. The app walks you through each one in
    fully offline.
 
 Then tap **Add apps**, search for the apps that pull you in, and select them.
-Each app can use the global friction sequence or its own ordered sequence.
+Each app can use the global friction sequence or its own ordered sequence. In
+**Settings → Default friction** and in an app's sequence dialog, use the up/down
+arrows to change the order. The order is stored as an ordered list; older
+single-mode and unordered-set preferences still load in canonical order.
+
+The same order is used by the live pause, the history row, and the per-app
+dialog. Adding a mode appends it; moving uses the arrow controls, not the
+mode's enum ordinal.
 
 ### Testing the interception
 
@@ -144,8 +151,11 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
   retry state and launches only after a successful retry. It also recreates the
   ViewModel from `SavedStateHandle` to prove the step, intention and limit
   survive process death.
-- `PauseSettingsTest` — ordered/deduplicated default sequences, per-app
-  sequences, and the empty-sequence fallback.
+- `PauseSettingsTest` — order-preserving default and per-app sequences,
+  legacy override decoding, reordering, and the empty-sequence fallback.
+- `SettingsRepositoryTest` — file-backed DataStore proof that the ordered
+  default key, app append/reorder behavior, per-app order, and legacy
+  unordered-set fallback persist correctly.
 - `InterceptionRepositoryTest` — Robolectric + in-memory Room coverage of the
   local-day boundaries, attempt/walked-away counts, most-triggered app, the
   record-then-complete flow, and full-sequence history.
