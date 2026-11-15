@@ -157,6 +157,10 @@
     <string name="continue_next">Next</string>
     <string name="continue_to_app">Continue to %1$s</string>
     <string name="close_and_leave">Close &amp; do something else</string>
+    <string name="session_start_error_title">Couldn\'t start your session</string>
+    <string name="session_start_error_body">Pause couldn\'t save your time limit, so %1$s wasn\'t opened. Nothing was lost. Try again?</string>
+    <string name="session_start_retry">Retry</string>
+    <string name="session_start_keep_closed">Keep app closed</string>
 
     <!-- Session reminder overlay -->
     <string name="session_reminder_title">Time\'s up</string>

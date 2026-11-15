@@ -129,7 +129,10 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
 - `CooldownTrackerTest` — per-app cooldowns, extension without shortening,
   exact expiry, clearing and invalid durations.
 - `SessionLimitManagerTest` — virtual-time timer emission, cancellation,
-  replacement, durable persistence and restart restoration.
+  replacement, durable persistence, failure cleanup and restart restoration.
+- `InterventionViewModelTest` — a gated persistence write proves the target-app
+  effect waits for success; a failed write keeps the app closed, exposes the
+  retry state and launches only after a successful retry.
 - `PauseSettingsTest` — ordered/deduplicated default sequences, per-app
   sequences, and the empty-sequence fallback.
 - `InterceptionRepositoryTest` — Robolectric + in-memory Room coverage of the
@@ -190,6 +193,7 @@ app/src/main/java/com/pause/app/
 app/src/test/java/com/pause/app/
 ├── data/               Robolectric + in-memory Room stats tests
 ├── service/            Gate, cooldown and session-limit unit tests
+├── ui/                 Pause ViewModel persistence-order tests
 └── util/               Fake monotonic clock
 
 app/src/androidTest/java/com/pause/app/
@@ -224,6 +228,9 @@ app/src/debug/java/com/pause/app/testing/
 - Session timers are persisted and restored after process death or reboot. A
   local notification is the fallback; Android can still cancel alarms after a
   force-stop or apply OEM-specific background restrictions.
+- If a chosen session deadline cannot be persisted, Pause does not open the
+  target app. The pause screen shows an error with Retry and Keep app closed
+  actions; retry persists again before any launch.
 - Notification delivery requires the notification permission on Android 13+.
   The overlay remains available when the process is alive and the device is
   unlocked.

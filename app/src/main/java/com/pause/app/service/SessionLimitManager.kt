@@ -5,6 +5,7 @@ import com.pause.app.domain.model.ActiveSession
 import java.time.Clock
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -34,7 +35,7 @@ class SessionLimitManager @Inject constructor(
     private val alarmScheduler: SessionAlarmScheduler,
     private val notifier: SessionReminderSink,
     private val clock: Clock,
-) {
+) : SessionStarter {
 
     data class Session(
         val packageName: String,
@@ -81,8 +82,12 @@ class SessionLimitManager @Inject constructor(
      * launching the target app, so an immediate process death cannot lose the
      * active session.
      */
-    suspend fun startSession(packageName: String, appLabel: String, limitMinutes: Int) {
-        if (limitMinutes <= 0) return
+    override suspend fun startSession(
+        packageName: String,
+        appLabel: String,
+        limitMinutes: Int,
+    ): Result<Unit> {
+        if (limitMinutes <= 0) return Result.success(Unit)
         val stored = ActiveSession(
             packageName = packageName,
             appLabel = appLabel,
@@ -95,13 +100,25 @@ class SessionLimitManager @Inject constructor(
             limitMinutes = limitMinutes,
         )
 
-        stateMutex.withLock {
+        return stateMutex.withLock {
             timerJob?.cancel()
-            // Persist first; only then publish the active timer.
-            persistence.write(stored)
-            alarmScheduler.schedule(stored)
+            timerJob = null
+            try {
+                // Persist first; only then publish the active timer.
+                persistence.write(stored)
+                alarmScheduler.schedule(stored)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Throwable) {
+                // Do not leave a durable deadline for an app we are not opening.
+                runCatching { persistence.clear() }
+                runCatching { alarmScheduler.cancel() }
+                activeSession = null
+                return@withLock Result.failure(failure)
+            }
             activeSession = session
             startTimer(limitMinutes * 60_000L, session)
+            Result.success(Unit)
         }
     }
 
@@ -140,7 +157,7 @@ class SessionLimitManager @Inject constructor(
     }
 
     /** Cancels the session when the user leaves the app for good. */
-    suspend fun cancelSession(packageName: String? = null) {
+    override suspend fun cancelSession(packageName: String?) {
         stateMutex.withLock {
             val current = activeSession ?: return@withLock
             if (packageName != null && current.packageName != packageName) return@withLock

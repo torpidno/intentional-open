@@ -62,7 +62,7 @@ fun resetAppState(entryPoint: PauseTestEntryPoint) = runBlocking {
     withContext(Dispatchers.IO) {
         entryPoint.pauseDatabase().clearAllTables()
     }
-    entryPoint.sessionLimitManager().cancelSession()
+    entryPoint.sessionLimitManager().cancelSession(null)
     entryPoint.settingsRepository().apply {
         setEnabled(true)
         setDefaultFrictionMode(FrictionMode.BREATHING)

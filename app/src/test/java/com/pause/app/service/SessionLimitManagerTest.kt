@@ -1,6 +1,7 @@
 package com.pause.app.service
 
 import com.pause.app.domain.model.ActiveSession
+import java.io.IOException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -180,6 +181,19 @@ class SessionLimitManagerTest {
     }
 
     @Test
+    fun `a persistence failure leaves no active session`() = runTest {
+        val persistence = FailingSessionPersistence(IOException("disk full"))
+        val scheduler = RecordingAlarmScheduler()
+        val manager = manager(persistence, scheduler)
+
+        val result = manager.startSession(INSTAGRAM, "Instagram", 5)
+
+        assertTrue(result.isFailure)
+        assertNull(persistence.stored)
+        assertNull(scheduler.scheduled)
+    }
+
+    @Test
     fun `non-positive limits are ignored`() = runTest {
         val persistence = InMemorySessionPersistence()
         val scheduler = RecordingAlarmScheduler()
@@ -217,6 +231,23 @@ class SessionLimitManagerTest {
 
         override suspend fun write(session: ActiveSession) {
             stored = session
+        }
+
+        override suspend fun clear() {
+            stored = null
+        }
+    }
+
+    private class FailingSessionPersistence(
+        private val failure: Throwable,
+    ) : SessionPersistence {
+        var stored: ActiveSession? = null
+
+        override suspend fun read(): ActiveSession? = stored
+
+        override suspend fun write(session: ActiveSession) {
+            stored = session
+            throw failure
         }
 
         override suspend fun clear() {

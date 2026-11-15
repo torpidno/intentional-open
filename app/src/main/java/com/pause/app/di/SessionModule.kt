@@ -4,8 +4,10 @@ import com.pause.app.service.AlarmManagerSessionAlarmScheduler
 import com.pause.app.service.DataStoreSessionPersistence
 import com.pause.app.service.SessionAlarmScheduler
 import com.pause.app.service.SessionPersistence
+import com.pause.app.service.SessionLimitManager
 import com.pause.app.service.SessionReminderNotifier
 import com.pause.app.service.SessionReminderSink
+import com.pause.app.service.SessionStarter
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -33,4 +35,10 @@ abstract class SessionModule {
     abstract fun bindSessionReminderSink(
         implementation: SessionReminderNotifier,
     ): SessionReminderSink
+
+    @Binds
+    @Singleton
+    abstract fun bindSessionStarter(
+        implementation: SessionLimitManager,
+    ): SessionStarter
 }

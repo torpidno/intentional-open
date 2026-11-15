@@ -57,7 +57,7 @@ class PauseScreenInstrumentedTest {
     fun tearDown() {
         runCatching { scenario?.close() }
         scenario = null
-        runBlocking { entryPoint.sessionLimitManager().cancelSession() }
+        runBlocking { entryPoint.sessionLimitManager().cancelSession(null) }
         configureBreathingSeconds(entryPoint, 5)
     }
 
