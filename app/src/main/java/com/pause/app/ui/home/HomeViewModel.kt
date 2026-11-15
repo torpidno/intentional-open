@@ -24,7 +24,7 @@ data class MonitoredAppUi(
     val label: String,
     val icon: ImageBitmap?,
     val isPaused: Boolean,
-    val modeOverride: FrictionMode?,
+    val modeOverride: List<FrictionMode>?,
 )
 
 data class HomeUiState(
@@ -112,8 +112,8 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setAppPaused(packageName, paused) }
     }
 
-    fun setAppModeOverride(packageName: String, mode: FrictionMode?) {
-        viewModelScope.launch { settingsRepository.setAppModeOverride(packageName, mode) }
+    fun setAppModeOverride(packageName: String, modes: List<FrictionMode>?) {
+        viewModelScope.launch { settingsRepository.setAppModeOverrides(packageName, modes) }
     }
 
 }

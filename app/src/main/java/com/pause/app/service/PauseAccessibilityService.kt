@@ -54,6 +54,9 @@ class PauseAccessibilityService : AccessibilityService() {
     @Inject
     lateinit var sessionReminderOverlay: SessionReminderOverlay
 
+    @Inject
+    lateinit var sessionReminderNotifier: SessionReminderNotifier
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var ignoredPackages: Set<String> = emptySet()
@@ -80,16 +83,21 @@ class PauseAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             sessionLimitManager.finished.collect { session ->
                 cooldownTracker.setCooldown(session.packageName, SESSION_END_GRACE_MS)
-                // Never wake the display or draw over the keyguard for a reminder.
+                // Never wake the display or draw over the keyguard for a reminder,
+                // but still leave a notification for when the user looks.
                 if (powerManager?.isInteractive != true || keyguardManager?.isKeyguardLocked == true) {
+                    sessionReminderNotifier.show(session.appLabel)
                     return@collect
                 }
-                sessionReminderOverlay.show(
+                val shown = sessionReminderOverlay.show(
                     host = this@PauseAccessibilityService,
                     appLabel = session.appLabel,
                     onCloseApp = { performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME) },
                     onDismiss = { /* keep using the app; no extra friction */ },
                 )
+                if (!shown) {
+                    sessionReminderNotifier.show(session.appLabel)
+                }
             }
         }
     }

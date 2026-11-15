@@ -28,9 +28,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -40,6 +40,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -67,6 +68,7 @@ import com.pause.app.ui.components.PauseCard
 import com.pause.app.ui.components.PrivacyFooter
 import com.pause.app.ui.components.SectionHeader
 import com.pause.app.ui.components.StatTile
+import com.pause.app.ui.components.descriptionRes
 import com.pause.app.ui.components.label
 import com.pause.app.ui.components.pauseClickable
 import com.pause.app.ui.components.summary
@@ -79,6 +81,7 @@ import com.pause.app.util.PermissionSnapshot
 fun HomeScreen(
     onOpenSettings: () -> Unit,
     onAddApps: () -> Unit,
+    onOpenHistory: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -160,6 +163,7 @@ fun HomeScreen(
                         walkedAway = state.walkedAwayToday,
                         mostTriggeredLabel = state.mostTriggeredLabel,
                         mostTriggeredCount = state.mostTriggeredCount,
+                        onOpenHistory = onOpenHistory,
                     )
                 }
 
@@ -181,8 +185,8 @@ fun HomeScreen(
                             onPausedChange = { paused ->
                                 viewModel.setAppPaused(app.packageName, paused)
                             },
-                            onModeChange = { mode ->
-                                viewModel.setAppModeOverride(app.packageName, mode)
+                            onModeChange = { modes ->
+                                viewModel.setAppModeOverride(app.packageName, modes)
                             },
                         )
                     }
@@ -340,12 +344,25 @@ private fun StatsCard(
     walkedAway: Int,
     mostTriggeredLabel: String?,
     mostTriggeredCount: Int,
+    onOpenHistory: () -> Unit,
 ) {
     PauseCard {
-        Text(
-            text = stringResource(R.string.home_stats_title),
-            style = MaterialTheme.typography.titleMedium,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.home_stats_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = onOpenHistory,
+                modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+            ) {
+                Text(
+                    text = stringResource(R.string.home_history_action),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
         Spacer(Modifier.height(PauseDimens.space16))
         Row(verticalAlignment = Alignment.CenterVertically) {
             StatTile(
@@ -408,10 +425,11 @@ private fun MonitoredAppCard(
     app: MonitoredAppUi,
     defaultModes: List<FrictionMode>,
     onPausedChange: (Boolean) -> Unit,
-    onModeChange: (FrictionMode?) -> Unit,
+    onModeChange: (List<FrictionMode>?) -> Unit,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
+    var dialogOpen by remember { mutableStateOf(false) }
     val defaultModeLabel = defaultModes.summary()
+    val overrideModes = app.modeOverride
     val switchDescription = stringResource(R.string.cd_app_pause_switch, app.label)
 
     Surface(
@@ -445,7 +463,7 @@ private fun MonitoredAppCard(
                     modifier = Modifier.pauseClickable(
                         shape = CircleShape,
                         minHeight = PauseDimens.touchTarget,
-                        onClick = { menuExpanded = true },
+                        onClick = { dialogOpen = true },
                     ),
                     contentAlignment = Alignment.CenterStart,
                 ) {
@@ -462,11 +480,11 @@ private fun MonitoredAppCard(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = app.modeOverride?.label()
-                                    ?: stringResource(
-                                        R.string.app_mode_default,
-                                        defaultModeLabel,
-                                    ),
+                                text = if (overrideModes != null) {
+                                    overrideModes.summary()
+                                } else {
+                                    stringResource(R.string.app_mode_default, defaultModeLabel)
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 maxLines = 1,
@@ -480,44 +498,6 @@ private fun MonitoredAppCard(
                             )
                         }
                     }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    stringResource(
-                                        R.string.app_mode_menu_default,
-                                        defaultModeLabel,
-                                    ),
-                                )
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onModeChange(null)
-                            },
-                        )
-                        HorizontalDivider()
-                        FrictionMode.entries.forEach { mode ->
-                            DropdownMenuItem(
-                                text = { Text(mode.label()) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onModeChange(mode)
-                                },
-                                trailingIcon = {
-                                    if (app.modeOverride == mode) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
                 }
             }
             Spacer(Modifier.width(PauseDimens.space8))
@@ -528,6 +508,147 @@ private fun MonitoredAppCard(
             )
         }
     }
+
+    if (dialogOpen) {
+        AppFrictionDialog(
+            appLabel = app.label,
+            currentOverride = overrideModes,
+            defaultModes = defaultModes,
+            onDismiss = { dialogOpen = false },
+            onUseDefault = {
+                dialogOpen = false
+                onModeChange(null)
+            },
+            onSave = { modes ->
+                dialogOpen = false
+                onModeChange(if (modes == defaultModes) null else modes)
+            },
+        )
+    }
+}
+
+@Composable
+private fun AppFrictionDialog(
+    appLabel: String,
+    currentOverride: List<FrictionMode>?,
+    defaultModes: List<FrictionMode>,
+    onDismiss: () -> Unit,
+    onUseDefault: () -> Unit,
+    onSave: (List<FrictionMode>) -> Unit,
+) {
+    var selected by remember(appLabel, currentOverride, defaultModes) {
+        mutableStateOf(currentOverride ?: defaultModes)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(appLabel) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(
+                        if (currentOverride == null) {
+                            R.string.app_friction_using_default
+                        } else {
+                            R.string.app_friction_custom
+                        },
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(PauseDimens.space8))
+                Text(
+                    text = stringResource(R.string.app_friction_dialog_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(PauseDimens.space8))
+                FrictionMode.entries.forEach { mode ->
+                    val checked = mode in selected
+                    val onlySelected = checked && selected.size == 1
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pauseClickable(
+                                shape = MaterialTheme.shapes.medium,
+                                enabled = !onlySelected,
+                                minHeight = 56.dp,
+                                onClick = {
+                                    selected = if (checked) {
+                                        selected - mode
+                                    } else {
+                                        (selected + mode)
+                                            .distinct()
+                                            .sortedBy { it.ordinal }
+                                    }
+                                },
+                            )
+                            .padding(
+                                horizontal = PauseDimens.space8,
+                                vertical = PauseDimens.space8,
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = {
+                                selected = if (checked) {
+                                    selected - mode
+                                } else {
+                                    (selected + mode)
+                                        .distinct()
+                                        .sortedBy { it.ordinal }
+                                }
+                            },
+                            enabled = !onlySelected,
+                        )
+                        Spacer(Modifier.width(PauseDimens.space8))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = mode.label(),
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(
+                                text = stringResource(mode.descriptionRes()),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(PauseDimens.space8))
+                Text(
+                    text = stringResource(R.string.settings_default_mode_minimum),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (currentOverride != null) {
+                    TextButton(
+                        onClick = onUseDefault,
+                        modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.app_friction_use_default),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(selected) },
+                enabled = selected.isNotEmpty(),
+            ) {
+                Text(stringResource(R.string.app_friction_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.app_friction_cancel))
+            }
+        },
+    )
 }
 
 @Composable

@@ -26,7 +26,10 @@ data class InterventionLogEntity(
     val appLabel: String,
     val timestampMillis: Long,
     val outcome: InterventionOutcome,
+    /** First mode, kept as the representative value for older rows. */
     val frictionMode: FrictionMode,
+    /** Comma-separated enum names for the full sequence; null on legacy rows. */
+    val frictionModeSequence: String? = null,
     val intention: String? = null,
     val sessionLimitMinutes: Int? = null,
 )

@@ -4,6 +4,7 @@ import com.pause.app.data.local.InterventionLogDao
 import com.pause.app.data.local.InterventionLogEntity
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.InterventionOutcome
+import com.pause.app.domain.model.InterventionRecord
 import com.pause.app.domain.model.TodayStats
 import java.time.Clock
 import java.time.LocalDate
@@ -11,6 +12,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 
 /**
  * Append-only history of intercepted launches plus the aggregates used by the
@@ -54,15 +56,31 @@ class InterceptionRepository @Inject constructor(
         packageName: String,
         appLabel: String,
         mode: FrictionMode,
-    ): Long = dao.insert(
-        InterventionLogEntity(
-            packageName = packageName,
-            appLabel = appLabel,
-            timestampMillis = clock.millis(),
-            outcome = InterventionOutcome.PENDING,
-            frictionMode = mode,
-        ),
-    )
+    ): Long = recordAttempt(packageName, appLabel, listOf(mode))
+
+    /** Records a multi-step pause; the full sequence is preserved for history. */
+    suspend fun recordAttempt(
+        packageName: String,
+        appLabel: String,
+        modes: List<FrictionMode>,
+    ): Long {
+        val normalized = modes.distinct().sortedBy { it.ordinal }
+            .ifEmpty { listOf(FrictionMode.BREATHING) }
+        return dao.insert(
+            InterventionLogEntity(
+                packageName = packageName,
+                appLabel = appLabel,
+                timestampMillis = clock.millis(),
+                outcome = InterventionOutcome.PENDING,
+                frictionMode = normalized.first(),
+                frictionModeSequence = normalized.joinToString(",") { it.name },
+            ),
+        )
+    }
+
+    /** Newest first; the history screen filters and formats the small result. */
+    fun observeHistory(limit: Int = 200): Flow<List<InterventionRecord>> =
+        dao.observeRecent(limit).map { rows -> rows.map { row -> row.toRecord() } }
 
     /** Attaches an outcome to a previously recorded attempt. */
     suspend fun completeAttempt(
@@ -75,6 +93,26 @@ class InterceptionRepository @Inject constructor(
         dao.complete(
             id = id,
             outcome = outcome,
+            intention = intention,
+            sessionLimitMinutes = sessionLimitMinutes,
+        )
+    }
+
+    private fun InterventionLogEntity.toRecord(): InterventionRecord {
+        val modes = frictionModeSequence
+            ?.split(",")
+            ?.mapNotNull { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
+            ?.distinct()
+            ?.sortedBy { it.ordinal }
+            ?.takeIf { it.isNotEmpty() }
+            ?: listOf(frictionMode)
+        return InterventionRecord(
+            id = id,
+            packageName = packageName,
+            appLabel = appLabel,
+            timestampMillis = timestampMillis,
+            outcome = outcome,
+            frictionModes = modes,
             intention = intention,
             sessionLimitMinutes = sessionLimitMinutes,
         )

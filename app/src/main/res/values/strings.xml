@@ -17,7 +17,7 @@
     </plurals>
     <string name="home_status_paused_body">Apps open normally. Turn Pause on when you\'re ready to be intentional.</string>
     <string name="home_permission_title">Finish setting up</string>
-    <string name="home_permission_body">%1$d of %2$d permissions granted. Pause needs all three to reliably step in.</string>
+    <string name="home_permission_body">%1$d of %2$d permissions granted. Pause needs all four to reliably step in.</string>
     <string name="home_permission_action">Review</string>
     <string name="home_stats_title">Today</string>
     <string name="home_stat_attempts">Intercepted</string>
@@ -30,16 +30,40 @@
     </plurals>
     <string name="home_monitored_title">Monitored apps</string>
     <string name="home_add_apps">Add apps</string>
+    <string name="home_history_action">History</string>
     <string name="home_empty_title">No apps monitored</string>
     <string name="home_empty_body">Choose the apps that tend to pull you in. Pause will meet you there.</string>
     <string name="home_empty_action">Choose apps</string>
     <string name="privacy_footer">Pause has no internet permission. Your settings and history stay on this device.</string>
     <string name="app_mode_default">Default · %1$s</string>
     <string name="app_mode_menu_default">Use global default (%1$s)</string>
+    <string name="app_friction_dialog_body">Choose one or more frictions for this app. They run in the order shown.</string>
+    <string name="app_friction_using_default">Currently using the global default.</string>
+    <string name="app_friction_custom">Custom sequence for this app.</string>
+    <string name="app_friction_use_default">Use global default</string>
+    <string name="app_friction_save">Save</string>
+    <string name="app_friction_cancel">Cancel</string>
     <string name="cd_open_settings">Open settings</string>
     <string name="cd_pause_switch">Pause interception</string>
     <string name="cd_app_pause_switch">Pause before opening %1$s</string>
     <string name="cd_back">Back</string>
+
+    <!-- History -->
+    <string name="history_title">History</string>
+    <string name="history_filter_all">All</string>
+    <string name="history_filter_walked_away">Walked away</string>
+    <string name="history_filter_continued">Continued</string>
+    <string name="history_empty_title">No pauses yet</string>
+    <string name="history_empty_body">Your intercepted launches will appear here with the intention and limit you chose.</string>
+    <string name="history_filter_empty_title">Nothing in this filter</string>
+    <string name="history_filter_empty_body">Try another outcome or choose All.</string>
+    <string name="history_date_time">%1$s · %2$s</string>
+    <string name="history_friction_label">Friction: %1$s</string>
+    <string name="history_intention_label">Intention: %1$s</string>
+    <string name="history_limit_label">%1$d min limit</string>
+    <string name="history_outcome_walked_away">Walked away</string>
+    <string name="history_outcome_continued">Continued</string>
+    <string name="history_outcome_unfinished">Unfinished</string>
 
     <!-- Friction modes -->
     <string name="mode_breathing">Breathing pause</string>
@@ -52,7 +76,7 @@
     <!-- Settings and permissions -->
     <string name="settings_title">Settings</string>
     <string name="settings_permissions_title">Setup</string>
-    <string name="settings_permissions_subtitle">Turn on all three so Pause can step in reliably, even when the phone is busy.</string>
+    <string name="settings_permissions_subtitle">Turn on all four so Pause can step in reliably, even when the phone is busy.</string>
     <string name="permission_progress">%1$d of %2$d complete</string>
     <string name="permission_granted">Granted</string>
     <string name="permission_needs_action">Needs action</string>
@@ -65,6 +89,9 @@
     <string name="permission_overlay_body">Lets Pause draw its pause screen and the gentle session-end reminder over the app you opened.</string>
     <string name="permission_battery_title">Battery optimisation</string>
     <string name="permission_battery_body">Exempting Pause keeps the service awake so the pause is there when you need it. It uses negligible battery when idle.</string>
+    <string name="permission_notifications_title">Session reminders</string>
+    <string name="permission_notifications_body">A local notification lets Pause remind you when a session ends, even if Android closed the app. It uses no internet.</string>
+    <string name="permission_notifications_settings">Notification settings</string>
     <string name="settings_preferences_title">Behaviour</string>
     <string name="settings_cooldown_title">Grace period</string>
     <string name="settings_cooldown_body">After you continue, Pause stays out of your way for this long.</string>
@@ -136,4 +163,6 @@
     <string name="session_reminder_body">Your pause for %1$s has ended. Ready to put the phone down?</string>
     <string name="session_reminder_close_app">Close app</string>
     <string name="session_reminder_keep_going">Keep going</string>
+    <string name="session_notification_channel">Session reminders</string>
+    <string name="session_notification_channel_description">Alerts when a chosen app session limit ends.</string>
 </resources>

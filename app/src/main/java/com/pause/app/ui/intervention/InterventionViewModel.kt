@@ -113,7 +113,7 @@ class InterventionViewModel @Inject constructor(
         } else {
             viewModelScope.async {
                 savedStateHandle.get<Long>(KEY_ATTEMPT_ID) ?: interceptionRepository
-                    .recordAttempt(packageName, appLabel, primaryMode)
+                    .recordAttempt(packageName, appLabel, modes)
                     .also { savedStateHandle[KEY_ATTEMPT_ID] = it }
             }
         }
@@ -227,6 +227,8 @@ class InterventionViewModel @Inject constructor(
                     ?: (settings.cooldownMinutes * 60_000L)
                 cooldownTracker.setCooldown(packageName, cooldownMillis)
                 if (limitMinutes != null) {
+                    // This waits for the absolute deadline to be persisted before
+                    // the target app is launched below.
                     sessionLimitManager.startSession(packageName, state.appLabel, limitMinutes)
                 }
                 interceptionRepository.completeAttempt(

@@ -22,7 +22,9 @@ object DatabaseModule {
             context,
             PauseDatabase::class.java,
             "pause.db",
-        ).build()
+        )
+            .addMigrations(PauseDatabase.MIGRATION_1_2)
+            .build()
 
     @Provides
     fun provideInterventionLogDao(database: PauseDatabase): InterventionLogDao =

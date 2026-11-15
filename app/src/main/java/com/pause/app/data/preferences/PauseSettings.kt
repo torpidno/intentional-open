@@ -18,8 +18,8 @@ data class PauseSettings(
     val monitoredPackages: Set<String> = emptySet(),
     /** Selected apps that are temporarily switched off on the home screen. */
     val pausedPackages: Set<String> = emptySet(),
-    /** Per-app friction overrides. Apps without an entry use [defaultFrictionModes]. */
-    val appModeOverrides: Map<String, FrictionMode> = emptyMap(),
+    /** Per-app friction sequences. Apps without an entry use [defaultFrictionModes]. */
+    val appModeOverrides: Map<String, List<FrictionMode>> = emptyMap(),
 ) {
     /** True when the app should trigger a pause right now. */
     fun isMonitored(packageName: String): Boolean =
@@ -31,8 +31,8 @@ data class PauseSettings(
      * whole global sequence for that app.
      */
     fun frictionModesFor(packageName: String): List<FrictionMode> {
-        val override = appModeOverrides[packageName]
-        val modes = if (override != null) listOf(override) else defaultFrictionModes
+        val override = appModeOverrides[packageName]?.takeIf { it.isNotEmpty() }
+        val modes = override ?: defaultFrictionModes
         return modes.distinct().sortedBy { it.ordinal }
             .ifEmpty { listOf(FrictionMode.BREATHING) }
     }

@@ -69,7 +69,7 @@ import com.pause.app.ui.components.pauseClickable
 import com.pause.app.ui.theme.PauseDimens
 
 /**
- * Full-screen pause surface. The three friction modes live in the middle; the
+ * Full-screen pause surface. The active friction steps live in the middle; the
  * close (primary) and continue (secondary) actions stay pinned to the bottom so
  * they remain reachable on tall phones and in landscape.
  */
