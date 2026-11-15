@@ -136,6 +136,9 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
 - `SessionStartupReconcilerTest` — real in-memory Room coverage of repairing an
   interrupted start: the active attempt becomes continued and stale pending
   rows become walked-away, while the restored cooldown is armed.
+- `DataStoreSessionPersistenceTest` — a file-backed Preferences DataStore with
+  an injected read failure and an injected first-write failure, verifying the
+  production wrapper's read fallback and the manager's cleanup write.
 - `InterventionViewModelTest` — a gated persistence write proves the target-app
   effect waits for success; a failed write keeps the app closed, exposes the
   retry state and launches only after a successful retry. It also recreates the
