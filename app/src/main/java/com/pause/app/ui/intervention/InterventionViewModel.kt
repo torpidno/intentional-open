@@ -252,13 +252,30 @@ class InterventionViewModel @Inject constructor(
         viewModelScope.launch {
             val intention = state.intentionText()
             val limitMinutes = state.selectedLimitMinutes
+            val attemptRowId = try {
+                attemptId.await()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Throwable) {
+                _uiState.update {
+                    it.copy(isCompleting = false, sessionStartError = true)
+                }
+                return@launch
+            }
 
             if (limitMinutes != null) {
                 // The target app stays closed until the deadline is safely on
                 // disk. A failure surfaces a retry path instead of silently
-                // opening the app without its session.
+                // opening the app without its session. The attempt id travels
+                // with the deadline so startup can repair a half-finished start.
                 val sessionResult = try {
-                    sessionStarter.startSession(packageName, state.appLabel, limitMinutes)
+                    sessionStarter.startSession(
+                        packageName = packageName,
+                        appLabel = state.appLabel,
+                        limitMinutes = limitMinutes,
+                        attemptId = attemptRowId,
+                        intention = intention,
+                    )
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Throwable) {
@@ -277,7 +294,7 @@ class InterventionViewModel @Inject constructor(
                     ?: (settings.cooldownMinutes * 60_000L)
                 cooldownTracker.setCooldown(packageName, cooldownMillis)
                 interceptionRepository.completeAttempt(
-                    id = attemptId.await(),
+                    id = attemptRowId,
                     outcome = InterventionOutcome.PROCEEDED,
                     intention = intention,
                     sessionLimitMinutes = limitMinutes,

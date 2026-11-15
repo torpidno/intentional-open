@@ -12,4 +12,8 @@ data class ActiveSession(
     val appLabel: String,
     val limitMinutes: Int,
     val endsAtEpochMillis: Long,
+    /** History row created before the deadline was persisted, if known. */
+    val attemptId: Long? = null,
+    /** Intention to restore onto that history row during recovery. */
+    val intention: String? = null,
 )

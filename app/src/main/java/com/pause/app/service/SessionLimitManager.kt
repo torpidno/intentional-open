@@ -82,10 +82,25 @@ class SessionLimitManager @Inject constructor(
      * launching the target app, so an immediate process death cannot lose the
      * active session.
      */
+    /** Convenience for callers that do not have a history row (tests/tools). */
+    suspend fun startSession(
+        packageName: String,
+        appLabel: String,
+        limitMinutes: Int,
+    ): Result<Unit> = startSession(
+        packageName = packageName,
+        appLabel = appLabel,
+        limitMinutes = limitMinutes,
+        attemptId = null,
+        intention = null,
+    )
+
     override suspend fun startSession(
         packageName: String,
         appLabel: String,
         limitMinutes: Int,
+        attemptId: Long?,
+        intention: String?,
     ): Result<Unit> {
         if (limitMinutes <= 0) return Result.success(Unit)
         val stored = ActiveSession(
@@ -93,6 +108,8 @@ class SessionLimitManager @Inject constructor(
             appLabel = appLabel,
             limitMinutes = limitMinutes,
             endsAtEpochMillis = clock.millis() + limitMinutes * 60_000L,
+            attemptId = attemptId,
+            intention = intention,
         )
         val session = Session(
             packageName = packageName,

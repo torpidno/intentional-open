@@ -98,6 +98,11 @@ class InterceptionRepository @Inject constructor(
         )
     }
 
+    /** Closes pause rows that were left pending by an interrupted process. */
+    suspend fun completeStalePendingAttempts() {
+        dao.completeAllPending(InterventionOutcome.WALKED_AWAY)
+    }
+
     private fun InterventionLogEntity.toRecord(): InterventionRecord {
         val modes = frictionModeSequence
             ?.split(",")

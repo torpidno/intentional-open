@@ -103,11 +103,14 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
 - **Cooldown:** after continuing, the same app will not be intercepted again for
   the configured grace period (5/10/15 min). A short launch guard also absorbs
   the splash → main-activity event burst so the overlay cannot loop.
-- **Durable sessions:** the active app, limit, and absolute end time are stored
-  in DataStore. A restart restores the remaining timer; an AlarmManager
-  fallback and boot/update receiver deliver a local notification if the app
-  process is gone. The overlay remains the primary reminder while the process
-  is alive.
+- **Durable sessions:** the active app, limit, absolute end time, and attempt
+  id are stored in DataStore. A restart restores the remaining timer and repairs
+  an interrupted start: the session's history row is completed and stale
+  `PENDING` rows are closed. The app launch is not replayed automatically; the
+  restored cooldown lets the user open the app without a duplicate pause, while
+  the timer still enforces the limit. An AlarmManager fallback and boot/update
+  receiver deliver a local notification if the process is gone. The overlay
+  remains the primary reminder while the process is alive.
 - **Ignored sources:** launchers (resolved dynamically), System UI, the
   permission controller and Pause itself.
 - **Lifecycle safety:** the service never shows the pause on the lock screen or
@@ -130,6 +133,9 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
   exact expiry, clearing and invalid durations.
 - `SessionLimitManagerTest` — virtual-time timer emission, cancellation,
   replacement, durable persistence, failure cleanup and restart restoration.
+- `SessionStartupReconcilerTest` — real in-memory Room coverage of repairing an
+  interrupted start: the active attempt becomes continued and stale pending
+  rows become walked-away, while the restored cooldown is armed.
 - `InterventionViewModelTest` — a gated persistence write proves the target-app
   effect waits for success; a failed write keeps the app closed, exposes the
   retry state and launches only after a successful retry. It also recreates the

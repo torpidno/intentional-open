@@ -42,6 +42,8 @@ class DataStoreSessionPersistence @Inject constructor(
             appLabel = appLabel,
             limitMinutes = limitMinutes,
             endsAtEpochMillis = endsAt,
+            attemptId = preferences[Keys.ATTEMPT_ID]?.takeIf { it > 0L },
+            intention = preferences[Keys.INTENTION],
         )
     }
 
@@ -51,6 +53,10 @@ class DataStoreSessionPersistence @Inject constructor(
             preferences[Keys.APP_LABEL] = session.appLabel
             preferences[Keys.LIMIT_MINUTES] = session.limitMinutes
             preferences[Keys.ENDS_AT] = session.endsAtEpochMillis
+            session.attemptId?.let { preferences[Keys.ATTEMPT_ID] = it }
+                ?: preferences.remove(Keys.ATTEMPT_ID)
+            session.intention?.let { preferences[Keys.INTENTION] = it }
+                ?: preferences.remove(Keys.INTENTION)
         }
     }
 
@@ -60,6 +66,8 @@ class DataStoreSessionPersistence @Inject constructor(
             preferences.remove(Keys.APP_LABEL)
             preferences.remove(Keys.LIMIT_MINUTES)
             preferences.remove(Keys.ENDS_AT)
+            preferences.remove(Keys.ATTEMPT_ID)
+            preferences.remove(Keys.INTENTION)
         }
     }
 
@@ -68,5 +76,7 @@ class DataStoreSessionPersistence @Inject constructor(
         val APP_LABEL = stringPreferencesKey("active_session_label")
         val LIMIT_MINUTES = intPreferencesKey("active_session_limit_minutes")
         val ENDS_AT = longPreferencesKey("active_session_ends_at")
+        val ATTEMPT_ID = longPreferencesKey("active_session_attempt_id")
+        val INTENTION = stringPreferencesKey("active_session_intention")
     }
 }

@@ -11,6 +11,8 @@ interface SessionStarter {
         packageName: String,
         appLabel: String,
         limitMinutes: Int,
+        attemptId: Long?,
+        intention: String?,
     ): Result<Unit>
 
     suspend fun cancelSession(packageName: String?)

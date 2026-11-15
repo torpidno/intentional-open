@@ -127,7 +127,7 @@ class SessionLimitManagerTest {
         val scheduler = RecordingAlarmScheduler()
         val manager = manager(persistence, scheduler)
 
-        manager.startSession(INSTAGRAM, "Instagram", 5)
+        manager.startSession(INSTAGRAM, "Instagram", 5, attemptId = 42L, intention = "Check")
 
         // startSession is suspend and must persist before it returns.
         val stored = persistence.stored
@@ -135,6 +135,8 @@ class SessionLimitManagerTest {
         assertEquals(INSTAGRAM, stored?.packageName)
         assertEquals(5, stored?.limitMinutes)
         assertEquals(clock.millis() + FIVE_MINUTES, stored?.endsAtEpochMillis)
+        assertEquals(42L, stored?.attemptId)
+        assertEquals("Check", stored?.intention)
         assertEquals(stored, scheduler.scheduled)
     }
 

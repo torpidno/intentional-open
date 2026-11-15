@@ -126,6 +126,7 @@ class InterventionViewModelTest {
         runCurrent()
 
         assertNotNull(persistence.stored)
+        assertTrue((persistence.stored?.attemptId ?: 0L) > 0L)
         assertEquals(1, effects.size)
         assertTrue(effects.single() is InterventionEffect.OpenTargetApp)
     }
@@ -269,6 +270,8 @@ class InterventionViewModelTest {
         ) {
             completed += id
         }
+
+        override suspend fun completeAllPending(outcome: InterventionOutcome) = Unit
 
         override fun observeAttemptCount(startMillis: Long, endMillis: Long): Flow<Int> =
             flowOf(0)
