@@ -59,6 +59,8 @@ class PauseInterventionActivity : ComponentActivity() {
                         onLimitSelected = viewModel::selectSessionLimit,
                         onWalkAway = viewModel::walkAway,
                         onContinue = viewModel::continueToTargetApp,
+                        onRetrySessionStart = viewModel::retrySessionStart,
+                        onDismissSessionStartError = viewModel::walkAway,
                     )
 
                     LaunchedEffect(viewModel) {

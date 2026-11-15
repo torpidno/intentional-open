@@ -1,7 +1,11 @@
 package com.pause.app.ui.settings
 
+import android.Manifest
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,6 +80,9 @@ fun SettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { viewModel.refreshPermissions() }
 
     // Re-check permissions every time the user returns from a system screen.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermissions() }
@@ -170,6 +177,32 @@ fun SettingsScreen(
                         },
                         secondaryActionLabel = stringResource(R.string.permission_battery_list),
                         onSecondaryAction = viewModel::openBatteryOptimizationList,
+                    )
+                }
+
+                item {
+                    PermissionCard(
+                        step = 4,
+                        title = stringResource(R.string.permission_notifications_title),
+                        body = stringResource(R.string.permission_notifications_body),
+                        granted = state.permissions.notificationsGranted,
+                        onOpen = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                !state.permissions.notificationsGranted
+                            ) {
+                                notificationPermissionLauncher.launch(
+                                    Manifest.permission.POST_NOTIFICATIONS,
+                                )
+                            } else {
+                                viewModel.openPermissionSettings(PermissionType.NOTIFICATIONS)
+                            }
+                        },
+                        secondaryActionLabel = stringResource(
+                            R.string.permission_notifications_settings,
+                        ),
+                        onSecondaryAction = {
+                            viewModel.openPermissionSettings(PermissionType.NOTIFICATIONS)
+                        },
                     )
                 }
 

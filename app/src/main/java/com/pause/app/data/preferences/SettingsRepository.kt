@@ -133,12 +133,26 @@ class SettingsRepository @Inject constructor(
         }
     }
 
-    /** Pass null to remove the override and fall back to the global default. */
+    /** Compatibility helper for a single-mode app override. */
     suspend fun setAppModeOverride(packageName: String, mode: FrictionMode?) {
+        setAppModeOverrides(packageName, mode?.let { listOf(it) })
+    }
+
+    /** Pass null or an empty list to fall back to the global sequence. */
+    suspend fun setAppModeOverrides(
+        packageName: String,
+        modes: Collection<FrictionMode>?,
+    ) {
         if (packageName.isBlank()) return
         dataStore.edit { preferences ->
-            val overrides = decodeOverrides(preferences[Keys.APP_MODE_OVERRIDES].orEmpty()).toMutableMap()
-            if (mode == null) overrides.remove(packageName) else overrides[packageName] = mode
+            val overrides = decodeOverrides(preferences[Keys.APP_MODE_OVERRIDES].orEmpty())
+                .toMutableMap()
+            val normalized = modes?.let { normalizeFrictionModes(it) }.orEmpty()
+            if (normalized.isEmpty()) {
+                overrides.remove(packageName)
+            } else {
+                overrides[packageName] = normalized
+            }
             preferences[Keys.APP_MODE_OVERRIDES] = encodeOverrides(overrides)
         }
     }
@@ -148,20 +162,30 @@ class SettingsRepository @Inject constructor(
 // simple separators are unambiguous and keep the DataStore value human-readable.
 private const val ENTRY_SEPARATOR = "|"
 private const val VALUE_SEPARATOR = "="
+private const val MODE_SEPARATOR = ","
 
-private fun encodeOverrides(overrides: Map<String, FrictionMode>): String =
-    overrides.entries.joinToString(ENTRY_SEPARATOR) { (packageName, mode) ->
-        "$packageName$VALUE_SEPARATOR${mode.name}"
-    }
+internal fun encodeOverrides(overrides: Map<String, List<FrictionMode>>): String =
+    overrides.entries
+        .mapNotNull { (packageName, modes) ->
+            val normalized = normalizeFrictionModes(modes)
+            normalized.takeIf { it.isNotEmpty() }?.let { packageName to it }
+        }
+        .sortedBy { it.first }
+        .joinToString(ENTRY_SEPARATOR) { (packageName, modes) ->
+            "$packageName$VALUE_SEPARATOR${modes.joinToString(MODE_SEPARATOR) { it.name }}"
+        }
 
-private fun decodeOverrides(raw: String): Map<String, FrictionMode> =
+internal fun decodeOverrides(raw: String): Map<String, List<FrictionMode>> =
     raw.split(ENTRY_SEPARATOR)
         .mapNotNull { entry ->
             val parts = entry.split(VALUE_SEPARATOR, limit = 2)
-            if (parts.size != 2) return@mapNotNull null
-            val mode = runCatching { FrictionMode.valueOf(parts[1]) }.getOrNull()
-                ?: return@mapNotNull null
-            parts[0] to mode
+            if (parts.size != 2 || parts[0].isBlank()) return@mapNotNull null
+            val modes = parts[1].split(MODE_SEPARATOR)
+                .mapNotNull { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
+                .distinct()
+                .sortedBy { it.ordinal }
+            if (modes.isEmpty()) return@mapNotNull null
+            parts[0] to modes
         }
         .toMap()
 

@@ -55,6 +55,15 @@ interface InterventionLogDao {
     )
     fun observeMostTriggered(startMillis: Long, endMillis: Long): Flow<AppTriggerCount?>
 
+    @Query(
+        """
+        SELECT * FROM intervention_logs
+        ORDER BY timestampMillis DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeRecent(limit: Int): Flow<List<InterventionLogEntity>>
+
     @Query("DELETE FROM intervention_logs WHERE timestampMillis < :cutoffMillis")
     suspend fun deleteOlderThan(cutoffMillis: Long)
 }

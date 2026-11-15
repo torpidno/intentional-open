@@ -33,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -45,6 +46,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -69,7 +71,7 @@ import com.pause.app.ui.components.pauseClickable
 import com.pause.app.ui.theme.PauseDimens
 
 /**
- * Full-screen pause surface. The three friction modes live in the middle; the
+ * Full-screen pause surface. The active friction steps live in the middle; the
  * close (primary) and continue (secondary) actions stay pinned to the bottom so
  * they remain reachable on tall phones and in landscape.
  */
@@ -81,6 +83,8 @@ fun InterventionScreen(
     onLimitSelected: (Int) -> Unit,
     onWalkAway: () -> Unit,
     onContinue: () -> Unit,
+    onRetrySessionStart: () -> Unit,
+    onDismissSessionStartError: () -> Unit,
 ) {
     // Back behaves exactly like the primary CTA: no silent bypass.
     BackHandler(enabled = !state.isCompleting) { onWalkAway() }
@@ -136,6 +140,26 @@ fun InterventionScreen(
                 onWalkAway = onWalkAway,
             )
         }
+    }
+
+    if (state.sessionStartError) {
+        AlertDialog(
+            onDismissRequest = onDismissSessionStartError,
+            title = { Text(stringResource(R.string.session_start_error_title)) },
+            text = {
+                Text(stringResource(R.string.session_start_error_body, appName))
+            },
+            confirmButton = {
+                TextButton(onClick = onRetrySessionStart) {
+                    Text(stringResource(R.string.session_start_retry))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissSessionStartError) {
+                    Text(stringResource(R.string.session_start_keep_closed))
+                }
+            },
+        )
     }
 }
 

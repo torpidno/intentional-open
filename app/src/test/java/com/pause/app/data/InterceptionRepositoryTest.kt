@@ -116,6 +116,28 @@ class InterceptionRepositoryTest {
     }
 
     @Test
+    fun `history preserves the full friction sequence`() = runTest {
+        val attemptId = repository.recordAttempt(
+            INSTAGRAM,
+            "Instagram",
+            listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING),
+        )
+        repository.completeAttempt(
+            id = attemptId,
+            outcome = InterventionOutcome.PROCEEDED,
+            intention = "Check a message",
+            sessionLimitMinutes = 15,
+        )
+
+        val entry = repository.observeHistory().first().single()
+
+        assertEquals(listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT), entry.frictionModes)
+        assertEquals(InterventionOutcome.PROCEEDED, entry.outcome)
+        assertEquals("Check a message", entry.intention)
+        assertEquals(15, entry.sessionLimitMinutes)
+    }
+
+    @Test
     fun `empty database reports zero and no most triggered app`() = runTest {
         val stats = repository.observeTodayStats().first()
 

@@ -12,10 +12,11 @@ import com.pause.app.data.repository.InterceptionRepository
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.InterventionOutcome
 import com.pause.app.service.CooldownTracker
-import com.pause.app.service.SessionLimitManager
+import com.pause.app.service.SessionStarter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Clock
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
@@ -58,6 +59,8 @@ data class InterventionUiState(
     val note: String = "",
     val selectedLimitMinutes: Int? = null,
     val isCompleting: Boolean = false,
+    /** Shown after a session deadline could not be persisted. */
+    val sessionStartError: Boolean = false,
 ) {
     val hasNextStep: Boolean
         get() = stepIndex < modeCount - 1
@@ -72,7 +75,7 @@ class InterventionViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val installedAppsRepository: InstalledAppsRepository,
     private val interceptionRepository: InterceptionRepository,
-    private val sessionLimitManager: SessionLimitManager,
+    private val sessionStarter: SessionStarter,
     private val cooldownTracker: CooldownTracker,
     private val clock: Clock,
 ) : ViewModel() {
@@ -113,7 +116,7 @@ class InterventionViewModel @Inject constructor(
         } else {
             viewModelScope.async {
                 savedStateHandle.get<Long>(KEY_ATTEMPT_ID) ?: interceptionRepository
-                    .recordAttempt(packageName, appLabel, primaryMode)
+                    .recordAttempt(packageName, appLabel, modes)
                     .also { savedStateHandle[KEY_ATTEMPT_ID] = it }
             }
         }
@@ -217,18 +220,35 @@ class InterventionViewModel @Inject constructor(
             return
         }
 
-        _uiState.update { it.copy(isCompleting = true) }
+        _uiState.update { it.copy(isCompleting = true, sessionStartError = false) }
 
         viewModelScope.launch {
             val intention = state.intentionText()
             val limitMinutes = state.selectedLimitMinutes
+
+            if (limitMinutes != null) {
+                // The target app stays closed until the deadline is safely on
+                // disk. A failure surfaces a retry path instead of silently
+                // opening the app without its session.
+                val sessionResult = try {
+                    sessionStarter.startSession(packageName, state.appLabel, limitMinutes)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    Result.failure(failure)
+                }
+                if (sessionResult.isFailure) {
+                    _uiState.update {
+                        it.copy(isCompleting = false, sessionStartError = true)
+                    }
+                    return@launch
+                }
+            }
+
             runCatching {
                 val cooldownMillis = limitMinutes?.let { it * 60_000L }
                     ?: (settings.cooldownMinutes * 60_000L)
                 cooldownTracker.setCooldown(packageName, cooldownMillis)
-                if (limitMinutes != null) {
-                    sessionLimitManager.startSession(packageName, state.appLabel, limitMinutes)
-                }
                 interceptionRepository.completeAttempt(
                     id = attemptId.await(),
                     outcome = InterventionOutcome.PROCEEDED,
@@ -245,6 +265,13 @@ class InterventionViewModel @Inject constructor(
                 },
             )
         }
+    }
+
+    /** Retries only the persistence step; the pause selections are preserved. */
+    fun retrySessionStart() {
+        if (!_uiState.value.sessionStartError) return
+        _uiState.update { it.copy(sessionStartError = false) }
+        continueToTargetApp()
     }
 
     /**
@@ -278,7 +305,7 @@ class InterventionViewModel @Inject constructor(
 
         viewModelScope.launch {
             runCatching {
-                sessionLimitManager.cancelSession(packageName)
+                sessionStarter.cancelSession(packageName)
                 // Leaving the pause should not grant a free pass for the few
                 // seconds of the launch guard; the next launch is intercepted.
                 cooldownTracker.clear(packageName)

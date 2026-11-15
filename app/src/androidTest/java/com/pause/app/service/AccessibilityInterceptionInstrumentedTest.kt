@@ -92,7 +92,7 @@ class AccessibilityInterceptionInstrumentedTest {
     fun tearDown() {
         serviceController.restore()
         runBlocking {
-            entryPoint.sessionLimitManager().cancelSession()
+            entryPoint.sessionLimitManager().cancelSession(null)
             entryPoint.settingsRepository().apply {
                 setMonitored(SETTINGS_PACKAGE, false)
                 setBreathingDurationSeconds(5)
