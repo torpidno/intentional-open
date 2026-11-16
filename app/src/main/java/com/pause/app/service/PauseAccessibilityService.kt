@@ -4,7 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
 import android.content.Intent
 import android.os.PowerManager
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import com.pause.app.BuildConfig
 import com.pause.app.data.preferences.SettingsRepository
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.ui.intervention.PauseInterventionActivity
@@ -108,6 +110,7 @@ class PauseAccessibilityService : AccessibilityService() {
         }
         val packageName = event.packageName?.toString() ?: return
         val settings = settingsRepository.settings.value
+        if (BuildConfig.DEBUG) Log.d(TAG, "window change from $packageName")
 
         // The gate owns the whole decision: master switch, monitoring, ignore
         // list, lock/screen-off, duplicate-event debounce and cooldowns.
@@ -118,7 +121,11 @@ class PauseAccessibilityService : AccessibilityService() {
             isDeviceInteractive = powerManager?.isInteractive == true,
             isDeviceLocked = keyguardManager?.isKeyguardLocked == true,
         )
-        if (decision != InterceptionDecision.INTERCEPT) return
+        if (decision != InterceptionDecision.INTERCEPT) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "skip $packageName: $decision")
+            return
+        }
+        if (BuildConfig.DEBUG) Log.d(TAG, "intercept $packageName")
 
         launchIntervention(packageName, settings.frictionModesFor(packageName))
     }
@@ -130,6 +137,7 @@ class PauseAccessibilityService : AccessibilityService() {
                 // If the OS refuses the background activity start (for example
                 // because "Display over other apps" was never granted) let the
                 // next real app launch try again instead of blocking for minutes.
+                if (BuildConfig.DEBUG) Log.d(TAG, "launch failed for $packageName", it)
                 interceptionGate.onLaunchFailed(packageName)
             }
     }
@@ -176,6 +184,8 @@ class PauseAccessibilityService : AccessibilityService() {
     }
 
     private companion object {
+        const val TAG = "PauseInterception"
+
         /** Gives the user a moment after a session ends before pausing again. */
         const val SESSION_END_GRACE_MS = 60_000L
     }

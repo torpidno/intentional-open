@@ -131,7 +131,10 @@ class AccessibilityInterceptionInstrumentedTest {
                         .contains("PauseAccessibilityService")} " +
                     "interactive=${context.getSystemService(PowerManager::class.java)?.isInteractive} " +
                     "keyguard=${context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked} " +
-                    "attempts=$attempts on_screen=${visibleTexts()}",
+                    "attempts=$attempts " +
+                    "activities=${Shell.run("dumpsys activity activities")
+                        .lineSequence().filter { "pause.app" in it }.joinToString(" | ")} " +
+                    "on_screen=${visibleTexts()}",
             )
         }
 
