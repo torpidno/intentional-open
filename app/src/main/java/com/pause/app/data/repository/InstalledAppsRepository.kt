@@ -52,7 +52,8 @@ class InstalledAppsRepository @Inject constructor(
             val launcherPackages = packageManager.queryIntentActivities(
                 Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
                 0,
-            ).mapNotNullTo(mutableSetOf()) { it.activityInfo?.packageName }
+            ).filter { it.priority >= 0 }
+                .mapNotNullTo(mutableSetOf()) { it.activityInfo?.packageName }
 
             val launchable = packageManager.queryIntentActivities(
                 Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
