@@ -15,6 +15,7 @@ import com.pause.app.testing.AccessibilityServiceController
 import com.pause.app.testing.PauseTestEntryPoint
 import com.pause.app.testing.SETTINGS_PACKAGE
 import com.pause.app.testing.Shell
+import com.pause.app.testing.keepAccessibilityServicesEnabled
 import com.pause.app.testing.resetAppState
 import com.pause.app.testing.testEntryPoint
 import com.pause.app.testing.visibleTexts
@@ -52,6 +53,9 @@ class AccessibilityInterceptionInstrumentedTest {
 
     @Before
     fun setUp() {
+        // Must happen before UiDevice connects: a plain UiAutomation connection
+        // suspends every other accessibility service, Pause's included.
+        keepAccessibilityServicesEnabled()
         context = ApplicationProvider.getApplicationContext()
         entryPoint = testEntryPoint()
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())

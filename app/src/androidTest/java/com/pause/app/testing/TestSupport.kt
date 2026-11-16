@@ -30,6 +30,20 @@ fun testEntryPoint(): PauseTestEntryPoint {
     return EntryPointAccessors.fromApplication(application, PauseTestEntryPoint::class.java)
 }
 
+/**
+ * UiAutomator opens its UiAutomation connection with flags = 0, and the
+ * framework suspends every other accessibility service for such a connection.
+ * That includes Pause's own service: it binds, logs, sets its package filter and
+ * then receives no events at all. The flag has to be set before UiDevice opens
+ * the connection, and the same flags must be used for shell access afterwards so
+ * the framework does not reconnect and re-suspend.
+ */
+fun keepAccessibilityServicesEnabled() {
+    androidx.test.uiautomator.Configurator.getInstance().setUiAutomationFlags(
+        android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
+    )
+}
+
 /** Small wrapper around UiAutomation's shell execution for emulator setup. */
 object Shell {
     /**
