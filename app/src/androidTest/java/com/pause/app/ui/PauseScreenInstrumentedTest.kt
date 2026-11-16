@@ -12,6 +12,7 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.testing.PauseTestEntryPoint
+import com.pause.app.testing.Shell
 import com.pause.app.testing.TEST_TARGET_PACKAGE
 import com.pause.app.testing.configureBreathingSeconds
 import com.pause.app.testing.resetAppState
@@ -135,6 +136,14 @@ class PauseScreenInstrumentedTest {
         // findObject() is a single snapshot; a slower emulator can still be
         // composing the step right after the previous click.
         var node = device.wait(Until.findObject(By.text(text)), 5_000L)
+        if (node == null && imeShown()) {
+            // A visible keyboard shrinks the pause column, and Compose stops
+            // publishing semantics for the clipped chips. The IME consumes BACK,
+            // so this hides the keyboard without leaving the pause screen.
+            device.pressBack()
+            device.waitForIdle()
+            node = device.wait(Until.findObject(By.text(text)), 3_000L)
+        }
         // The pause column scrolls when a step is taller than the viewport (the
         // intention step parks the text field in view and pushes the chips up),
         // and Compose only publishes semantics for unclipped content, so a chip
@@ -152,6 +161,10 @@ class PauseScreenInstrumentedTest {
                 "Nodes: ${visibleNodes()}"
         }.click()
     }
+
+    private fun imeShown(): Boolean =
+        runCatching { Shell.run("dumpsys input_method").contains("mInputShown=true") }
+            .getOrDefault(false)
 
     private fun launch(mode: FrictionMode) {
         val intent = Intent(context, PauseInterventionActivity::class.java).apply {

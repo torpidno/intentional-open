@@ -71,7 +71,13 @@ class PauseAccessibilityService : AccessibilityService() {
         // Resolve system services once; onAccessibilityEvent is a hot path.
         powerManager = getSystemService(PowerManager::class.java)
         keyguardManager = getSystemService(KeyguardManager::class.java)
-        if (BuildConfig.DEBUG) Log.d(TAG, "service connected")
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                TAG,
+                "service connected: eventTypes=${serviceInfo?.eventTypes} " +
+                    "flags=${serviceInfo?.flags}",
+            )
+        }
         applyPackageFilter(settingsRepository.settings.value.effectiveMonitoredPackages)
 
         // Keep the framework-side package filter in sync with the user's picks.
@@ -106,12 +112,18 @@ class PauseAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                TAG,
+                "event ${event?.let { AccessibilityEvent.eventTypeToString(it.eventType) }} " +
+                    "from ${event?.packageName}",
+            )
+        }
         if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             return
         }
         val packageName = event.packageName?.toString() ?: return
         val settings = settingsRepository.settings.value
-        if (BuildConfig.DEBUG) Log.d(TAG, "window change from $packageName")
 
         // The gate owns the whole decision: master switch, monitoring, ignore
         // list, lock/screen-off, duplicate-event debounce and cooldowns.
