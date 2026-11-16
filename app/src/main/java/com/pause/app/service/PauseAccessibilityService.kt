@@ -71,6 +71,7 @@ class PauseAccessibilityService : AccessibilityService() {
         // Resolve system services once; onAccessibilityEvent is a hot path.
         powerManager = getSystemService(PowerManager::class.java)
         keyguardManager = getSystemService(KeyguardManager::class.java)
+        if (BuildConfig.DEBUG) Log.d(TAG, "service connected")
         applyPackageFilter(settingsRepository.settings.value.effectiveMonitoredPackages)
 
         // Keep the framework-side package filter in sync with the user's picks.
@@ -172,7 +173,9 @@ class PauseAccessibilityService : AccessibilityService() {
         } else {
             packages.toTypedArray()
         }
+        if (BuildConfig.DEBUG) Log.d(TAG, "package filter: ${info.packageNames?.joinToString()}")
         runCatching { setServiceInfo(info) }
+            .onFailure { if (BuildConfig.DEBUG) Log.d(TAG, "setServiceInfo failed", it) }
     }
 
     override fun onInterrupt() = Unit

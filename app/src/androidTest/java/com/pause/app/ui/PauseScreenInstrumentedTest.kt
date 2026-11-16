@@ -9,8 +9,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.testing.PauseTestEntryPoint
@@ -136,14 +134,17 @@ class PauseScreenInstrumentedTest {
         // findObject() is a single snapshot; a slower emulator can still be
         // composing the step right after the previous click.
         var node = device.wait(Until.findObject(By.text(text)), 5_000L)
-        if (node == null) {
-            // The pause column scrolls when a step is taller than the viewport,
-            // and Compose only publishes semantics for unclipped content, so the
-            // reason chips can be missing from the accessibility tree entirely.
-            runCatching {
-                UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView(text)
-            }
-            node = device.wait(Until.findObject(By.text(text)), 5_000L)
+        // The pause column scrolls when a step is taller than the viewport (the
+        // intention step parks the text field in view and pushes the chips up),
+        // and Compose only publishes semantics for unclipped content, so a chip
+        // can be missing from the accessibility tree until the column moves.
+        var swipes = 0
+        while (node == null && swipes < 3) {
+            val width = device.displayWidth
+            val height = device.displayHeight
+            device.swipe(width / 2, (height * 0.30f).toInt(), width / 2, (height * 0.55f).toInt(), 20)
+            node = device.wait(Until.findObject(By.text(text)), 2_000L)
+            swipes++
         }
         requireNotNull(node) {
             "Expected a UI element with text '$text'. On screen: ${visibleTexts()}"
