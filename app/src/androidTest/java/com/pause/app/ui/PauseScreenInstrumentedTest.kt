@@ -16,6 +16,7 @@ import com.pause.app.testing.TEST_TARGET_PACKAGE
 import com.pause.app.testing.configureBreathingSeconds
 import com.pause.app.testing.resetAppState
 import com.pause.app.testing.testEntryPoint
+import com.pause.app.testing.visibleTexts
 import com.pause.app.ui.intervention.PauseInterventionActivity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -133,7 +134,7 @@ class PauseScreenInstrumentedTest {
         // findObject() is a single snapshot; a slower emulator can still be
         // composing the step right after the previous click.
         val node = requireNotNull(device.wait(Until.findObject(By.text(text)), 10_000L)) {
-            "Expected a UI element with text '$text'"
+            "Expected a UI element with text '$text'. On screen: ${visibleTexts()}"
         }
         node.click()
     }

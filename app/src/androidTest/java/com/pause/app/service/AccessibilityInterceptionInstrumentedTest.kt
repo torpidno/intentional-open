@@ -15,6 +15,7 @@ import com.pause.app.testing.SETTINGS_PACKAGE
 import com.pause.app.testing.Shell
 import com.pause.app.testing.resetAppState
 import com.pause.app.testing.testEntryPoint
+import com.pause.app.testing.visibleTexts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -82,6 +83,11 @@ class AccessibilityInterceptionInstrumentedTest {
         Shell.run("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
         serviceController.enable()
 
+        // A headless emulator can leave the display asleep, and the gate never
+        // shows the pause with the screen off or the keyguard up.
+        Shell.run("input keyevent KEYCODE_WAKEUP")
+        Shell.run("wm dismiss-keyguard")
+
         // Let the service apply its runtime package filter.
         SystemClock.sleep(2_000L)
         device.pressHome()
@@ -109,7 +115,11 @@ class AccessibilityInterceptionInstrumentedTest {
 
         val pause = device.wait(Until.findObject(By.text("PAUSING")), 30_000L)
         assertNotNull(
-            "Pause screen did not appear after opening $SETTINGS_PACKAGE",
+            "Pause screen did not appear after opening $SETTINGS_PACKAGE. " +
+                "enabled_services=${Shell.run("settings get secure enabled_accessibility_services").trim()} " +
+                "service_running=${Shell.run("dumpsys activity services ${context.packageName}")
+                    .contains("PauseAccessibilityService")} " +
+                "on_screen=${visibleTexts()}",
             pause,
         )
 

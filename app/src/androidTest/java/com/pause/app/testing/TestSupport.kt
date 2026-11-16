@@ -52,6 +52,25 @@ object Shell {
     }
 }
 
+/**
+ * Every text currently exposed to accessibility in the window hierarchy.
+ *
+ * Compose only publishes semantics for content that is not clipped away, so this
+ * doubles as a "what is actually on screen" dump when a UI assertion fails.
+ */
+fun visibleTexts(): List<String> {
+    val device = androidx.test.uiautomator.UiDevice.getInstance(
+        InstrumentationRegistry.getInstrumentation(),
+    )
+    val out = java.io.ByteArrayOutputStream()
+    runCatching { device.dumpWindowHierarchy(out) }
+    return Regex("text=\"([^\"]+)\"")
+        .findAll(out.toString("UTF-8"))
+        .map { it.groupValues[1] }
+        .distinct()
+        .toList()
+}
+
 /** Polling helper for framework state that has no Flow to observe. */
 fun waitUntil(
     timeoutMillis: Long = 10_000L,
