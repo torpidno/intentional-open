@@ -16,6 +16,7 @@ import com.pause.app.testing.TEST_TARGET_PACKAGE
 import com.pause.app.testing.configureBreathingSeconds
 import com.pause.app.testing.resetAppState
 import com.pause.app.testing.testEntryPoint
+import com.pause.app.testing.visibleNodes
 import com.pause.app.testing.visibleTexts
 import com.pause.app.ui.intervention.PauseInterventionActivity
 import kotlinx.coroutines.flow.first
@@ -147,7 +148,8 @@ class PauseScreenInstrumentedTest {
             swipes++
         }
         requireNotNull(node) {
-            "Expected a UI element with text '$text'. On screen: ${visibleTexts()}"
+            "Expected a UI element with text '$text'. On screen: ${visibleTexts()}. " +
+                "Nodes: ${visibleNodes()}"
         }.click()
     }
 

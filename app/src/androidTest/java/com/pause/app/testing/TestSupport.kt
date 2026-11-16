@@ -71,6 +71,36 @@ fun visibleTexts(): List<String> {
         .toList()
 }
 
+/**
+ * Compact window hierarchy (class, text, screen bounds) for failure messages.
+ * Composes the accessibility tree exactly as UiAutomator sees it, so a node that
+ * is missing from [visibleTexts] can be told apart from one that is clipped.
+ */
+fun visibleNodes(): List<String> = runCatching {
+    val device = androidx.test.uiautomator.UiDevice.getInstance(
+        InstrumentationRegistry.getInstrumentation(),
+    )
+    val out = java.io.ByteArrayOutputStream()
+    device.dumpWindowHierarchy(out)
+    val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+        .newDocumentBuilder()
+        .parse(out.toByteArray().inputStream())
+    val nodes = mutableListOf<String>()
+    fun walk(node: org.w3c.dom.Node) {
+        if (node is org.w3c.dom.Element && node.tagName == "node") {
+            val text = node.getAttribute("text")
+            val description = node.getAttribute("content-desc")
+            if (text.isNotBlank() || description.isNotBlank()) {
+                val tag = node.getAttribute("class").substringAfterLast('.')
+                nodes += "$tag(${text.ifBlank { description }})@${node.getAttribute("bounds")}"
+            }
+        }
+        for (index in 0 until node.childNodes.length) walk(node.childNodes.item(index))
+    }
+    walk(doc)
+    nodes
+}.getOrDefault(emptyList())
+
 /** Polling helper for framework state that has no Flow to observe. */
 fun waitUntil(
     timeoutMillis: Long = 10_000L,
