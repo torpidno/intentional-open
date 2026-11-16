@@ -1,6 +1,8 @@
 package com.pause.app.service
 
+import android.app.KeyguardManager
 import android.content.Context
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,8 +24,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
@@ -114,14 +116,24 @@ class AccessibilityInterceptionInstrumentedTest {
         Shell.run("am start -a android.settings.SETTINGS -f 0x10000000")
 
         val pause = device.wait(Until.findObject(By.text("PAUSING")), 30_000L)
-        assertNotNull(
-            "Pause screen did not appear after opening $SETTINGS_PACKAGE. " +
-                "enabled_services=${Shell.run("settings get secure enabled_accessibility_services").trim()} " +
-                "service_running=${Shell.run("dumpsys activity services ${context.packageName}")
-                    .contains("PauseAccessibilityService")} " +
-                "on_screen=${visibleTexts()}",
-            pause,
-        )
+        if (pause == null) {
+            val attempts = runBlocking {
+                runCatching {
+                    withTimeout(3_000L) {
+                        entryPoint.interceptionRepository().observeTodayStats().first().attempts
+                    }
+                }.getOrDefault(-1)
+            }
+            fail(
+                "Pause screen did not appear after opening $SETTINGS_PACKAGE. " +
+                    "enabled_services=${Shell.run("settings get secure enabled_accessibility_services").trim()} " +
+                    "service_running=${Shell.run("dumpsys activity services ${context.packageName}")
+                        .contains("PauseAccessibilityService")} " +
+                    "interactive=${context.getSystemService(PowerManager::class.java)?.isInteractive} " +
+                    "keyguard=${context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked} " +
+                    "attempts=$attempts on_screen=${visibleTexts()}",
+            )
+        }
 
         val close = requireNotNull(
             device.wait(Until.findObject(By.text("Close & do something else")), 5_000L),

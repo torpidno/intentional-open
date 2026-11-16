@@ -9,6 +9,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
+import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.testing.PauseTestEntryPoint
@@ -133,10 +135,19 @@ class PauseScreenInstrumentedTest {
     private fun clickText(text: String) {
         // findObject() is a single snapshot; a slower emulator can still be
         // composing the step right after the previous click.
-        val node = requireNotNull(device.wait(Until.findObject(By.text(text)), 10_000L)) {
-            "Expected a UI element with text '$text'. On screen: ${visibleTexts()}"
+        var node = device.wait(Until.findObject(By.text(text)), 5_000L)
+        if (node == null) {
+            // The pause column scrolls when a step is taller than the viewport,
+            // and Compose only publishes semantics for unclipped content, so the
+            // reason chips can be missing from the accessibility tree entirely.
+            runCatching {
+                UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView(text)
+            }
+            node = device.wait(Until.findObject(By.text(text)), 5_000L)
         }
-        node.click()
+        requireNotNull(node) {
+            "Expected a UI element with text '$text'. On screen: ${visibleTexts()}"
+        }.click()
     }
 
     private fun launch(mode: FrictionMode) {
