@@ -19,8 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Reuse one debug keystore across runs so a new APK installs over the
-      # previous download instead of failing with a signature mismatch.
+      # Only used by the debug fallback: one cached debug key means successive
+      # fallback APKs install over each other instead of clashing signatures.
       - uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
@@ -41,16 +41,53 @@ jobs:
       - name: Configure SDK path
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      - name: Build debug APK
+      # `secrets` is not available in a step-level `if`, so the decision is made
+      # here and passed on as an output. Without the keystore the build stays
+      # installable by falling back to a debug APK instead of failing the job.
+      - name: Prepare release signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::RELEASE_KEYSTORE_BASE64 is not set, publishing a debug APK instead of a signed release build."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed release APK
+        if: steps.signing.outputs.signed == 'true'
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk Pause.apk
+
+      - name: Build debug APK (no release keystore configured)
+        if: steps.signing.outputs.signed != 'true'
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk Pause.apk
+
+      - name: Read the app version
+        id: version
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"/\1/p' app/build.gradle.kts | head -n1)
+          echo "name=${version:-unknown}" >> "$GITHUB_OUTPUT"
 
       # A fixed file name keeps the README download URL identical forever:
       # /releases/latest/download/Pause.apk
-      - name: Give the APK a stable name
-        run: cp app/build/outputs/apk/debug/app-debug.apk Pause.apk
-
       - name: Publish the latest release
         uses: softprops/action-gh-release@v2
         with:
@@ -62,5 +99,21 @@ jobs:
 
             One-press download: https://github.com/${{ github.repository }}/releases/latest/download/Pause.apk
 
-            This is a debug build signed with the Android debug key. It is not a Play Store release.
+            This is a ${{ steps.signing.outputs.signed == 'true' && 'signed release build (R8, release key)' || 'debug build signed with the Android debug key' }}. Every build is also kept as its own versioned release so older APKs stay downloadable.
+          files: Pause.apk
+
+      # versionName from Gradle plus the run number gives a tag that sorts by
+      # build order, e.g. v1.0.0-build.12.
+      - name: Publish a versioned snapshot
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}-build.${{ github.run_number }}
+          name: Pause ${{ steps.version.outputs.name }} (build ${{ github.run_number }})
+          make_latest: 'false'
+          body: |
+            Snapshot of `main` at commit ${{ github.sha }}, build ${{ github.run_number }}.
+
+            ${{ steps.signing.outputs.signed == 'true' && 'Signed release build (R8, release key).' || 'Debug build signed with the Android debug key.' }}
+
+            Download: https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.name }}-build.${{ github.run_number }}/Pause.apk
           files: Pause.apk

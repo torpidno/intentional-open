@@ -32,9 +32,19 @@ https://github.com/torpidno/intentional-open/releases/latest/download/Pause.apk
 ```
 
 Open the downloaded `Pause.apk` on the device and allow installs from that
-browser or file manager if Android asks. It is a universal debug build signed
-with the Android debug key, not a Play Store release. `.github/workflows/release-apk.yml`
-rebuilds and re-uploads it on every push to `main`.
+browser or file manager if Android asks. It is a universal **release build**
+(R8 minified, signed with the project release key), not a Play Store upload.
+`.github/workflows/release-apk.yml` rebuilds and re-uploads it on every push to
+`main`.
+
+Builds before 16 November 2026 were signed with the Android debug key, so
+uninstall that copy once before installing a release-signed APK. Android refuses
+to overwrite an app with a different signing key.
+
+Every build is also kept as its own versioned release
+(`v<versionName>-build.<run number>`, for example `v1.0.0-build.12`), so an older
+APK stays downloadable from the [Releases](https://github.com/torpidno/intentional-open/releases)
+page. The `latest` tag always follows the newest build.
 
 ## Build
 
@@ -57,9 +67,34 @@ A release build enables R8:
 ./gradlew :app:assembleRelease
 ```
 
+## Signing
+
 Release signing reads `keystore.properties` from the project root (store file,
 passwords and alias). Keep that file and the keystore private; both are ignored
-by Git.
+by Git:
+
+```properties
+storeFile=release-keystore.jks
+storePassword=…
+keyAlias=pause-release
+keyPassword=…
+```
+
+CI signs with the same identity from repository secrets, so a downloaded APK and
+a locally built one share a signature and install over each other:
+
+| Secret | Contents |
+| --- | --- |
+| `RELEASE_KEYSTORE_BASE64` | the keystore, base64 encoded (`base64 -w0 release-keystore.jks`) |
+| `RELEASE_STORE_PASSWORD` | keystore password |
+| `RELEASE_KEY_ALIAS` | key alias, `pause-release` |
+| `RELEASE_KEY_PASSWORD` | key password |
+
+The workflow decodes the keystore into `keystore.properties` for the build and
+never writes it to the repository. If `RELEASE_KEYSTORE_BASE64` is missing it
+warns and falls back to a debug APK rather than failing the release job. Losing
+the keystore means you can never publish an installable update again, so keep a
+backup of `release-keystore.jks` somewhere outside this repository.
 
 ### Opening in Android Studio
 
@@ -244,12 +279,16 @@ push and pull request:
 - Instrumented pause, accessibility, and error-dialog tests on API 26 and API 35
   emulators, with reports uploaded when a run fails.
 
-The emulator jobs require a runner with KVM acceleration; GitHub-hosted Ubuntu
-runners provide it.
+The emulator jobs need hardware acceleration. GitHub-hosted Ubuntu runners ship
+`/dev/kvm`, but the `kvm` group has no members, so the workflow first installs a
+udev rule that makes `/dev/kvm` usable. Without it the emulator silently falls
+back to software emulation, where installing the APK alone exceeds ddmlib's
+shell timeout and no test ever runs (`ShellCommandUnresponsiveException`).
 
 [`.github/workflows/release-apk.yml`](.github/workflows/release-apk.yml) builds
-the debug APK on every push to `main` and publishes it as the `Pause.apk` asset
-of the `latest` release, which is what the download button serves.
+the signed release APK on every push to `main` and publishes it as the
+`Pause.apk` asset of the `latest` release, which is what the download button
+serves. The same APK is attached to a versioned release tag as a snapshot.
 
 ## Project layout
 
