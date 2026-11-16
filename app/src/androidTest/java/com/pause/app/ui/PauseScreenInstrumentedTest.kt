@@ -130,7 +130,9 @@ class PauseScreenInstrumentedTest {
     }
 
     private fun clickText(text: String) {
-        val node = requireNotNull(device.findObject(By.text(text))) {
+        // findObject() is a single snapshot; a slower emulator can still be
+        // composing the step right after the previous click.
+        val node = requireNotNull(device.wait(Until.findObject(By.text(text)), 10_000L)) {
             "Expected a UI element with text '$text'"
         }
         node.click()

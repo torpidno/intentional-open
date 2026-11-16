@@ -60,10 +60,10 @@ class InterventionErrorDialogInstrumentedTest {
         // without landing on the Continue CTA in the pause surface behind it.
         composeRule.onNode(isDialog()).assertIsDisplayed()
         composeRule.onNodeWithText(RETRY).requestFocus()
-        composeRule.onNodeWithText(RETRY).assertIsFocused()
+        assertFocusOn(RETRY)
 
         composeRule.onNodeWithText(KEEP_CLOSED).requestFocus()
-        composeRule.onNodeWithText(KEEP_CLOSED).assertIsFocused()
+        assertFocusOn(KEEP_CLOSED)
         composeRule.onNodeWithText(CONTINUE).assertIsNotFocused()
 
         // Read the semantic focus flags directly so a platform focus change
@@ -77,6 +77,20 @@ class InterventionErrorDialogInstrumentedTest {
             .config
             .getOrElse(SemanticsProperties.Focused) { false }
         assertTrue("Focus left the dialog action set", retryFocused || closeFocused)
+    }
+
+    /**
+     * Focus is handed over by the window asynchronously, so newer platforms can
+     * still report Focused = false on the frame right after requestFocus().
+     */
+    private fun assertFocusOn(text: String) {
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onNodeWithText(text)
+                .fetchSemanticsNode()
+                .config
+                .getOrElse(SemanticsProperties.Focused) { false }
+        }
+        composeRule.onNodeWithText(text).assertIsFocused()
     }
 
     private fun showErrorDialog(

@@ -1,6 +1,7 @@
 package com.pause.app.testing
 
 import android.app.Application
+import android.app.UiAutomation
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
@@ -31,8 +32,20 @@ fun testEntryPoint(): PauseTestEntryPoint {
 
 /** Small wrapper around UiAutomation's shell execution for emulator setup. */
 object Shell {
+    /**
+     * A plain UiAutomation connection - the one UiDevice opens - temporarily
+     * disables every other accessibility service, including Pause's own. That
+     * makes `enabled_accessibility_services` look accepted while the service
+     * can never connect, so shell access here always reconnects with
+     * FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES.
+     */
+    private fun automation(): UiAutomation =
+        InstrumentationRegistry.getInstrumentation().getUiAutomation(
+            UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
+        )
+
     fun run(command: String): String {
-        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val automation = automation()
         val descriptor: ParcelFileDescriptor = automation.executeShellCommand(command)
         return ParcelFileDescriptor.AutoCloseInputStream(descriptor)
             .use { stream -> stream.readBytes().toString(Charsets.UTF_8) }
