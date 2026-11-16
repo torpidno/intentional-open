@@ -1,0 +1,66 @@
+name: Latest APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: latest-apk
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and publish the latest APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reuse one debug keystore across runs so a new APK installs over the
+      # previous download instead of failing with a signature mismatch.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Configure SDK path
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Build debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+
+      # A fixed file name keeps the README download URL identical forever:
+      # /releases/latest/download/Pause.apk
+      - name: Give the APK a stable name
+        run: cp app/build/outputs/apk/debug/app-debug.apk Pause.apk
+
+      - name: Publish the latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest APK
+          make_latest: 'true'
+          body: |
+            Automatically built from `main` at commit ${{ github.sha }}.
+
+            One-press download: https://github.com/${{ github.repository }}/releases/latest/download/Pause.apk
+
+            This is a debug build signed with the Android debug key. It is not a Play Store release.
+          files: Pause.apk

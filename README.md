@@ -8,6 +8,8 @@ temporary snoozes, retention controls, and local CSV history are also built in.
 Built with Kotlin, Jetpack Compose (Material 3), Hilt, Room and DataStore.
 No internet permission, no analytics, no accounts, no cloud sync.
 
+[![Download the latest APK](https://img.shields.io/badge/%E2%AC%87%EF%B8%8F_Download-latest_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/torpidno/intentional-open/releases/latest/download/Pause.apk)
+
 ## Requirements
 
 | Tool | Version |
@@ -18,6 +20,21 @@ No internet permission, no analytics, no accounts, no cloud sync.
 | Min / target SDK | 26 / 35 |
 | Gradle | 8.9 (wrapper included) |
 | Kotlin | 2.0.21 |
+
+## Install the latest build
+
+Tap the **Download latest APK** button above, or open the
+[Latest APK release](https://github.com/torpidno/intentional-open/releases/latest).
+Both resolve to the newest build of `main`, so the link never changes:
+
+```
+https://github.com/torpidno/intentional-open/releases/latest/download/Pause.apk
+```
+
+Open the downloaded `Pause.apk` on the device and allow installs from that
+browser or file manager if Android asks. It is a universal debug build signed
+with the Android debug key, not a Play Store release. `.github/workflows/release-apk.yml`
+rebuilds and re-uploads it on every push to `main`.
 
 ## Build
 
@@ -229,6 +246,10 @@ push and pull request:
 
 The emulator jobs require a runner with KVM acceleration; GitHub-hosted Ubuntu
 runners provide it.
+
+[`.github/workflows/release-apk.yml`](.github/workflows/release-apk.yml) builds
+the debug APK on every push to `main` and publishes it as the `Pause.apk` asset
+of the `latest` release, which is what the download button serves.
 
 ## Project layout
 
