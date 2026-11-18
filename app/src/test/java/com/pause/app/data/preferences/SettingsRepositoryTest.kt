@@ -15,6 +15,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -59,16 +60,21 @@ class SettingsRepositoryTest {
             listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING),
         )
 
-        val settings = repository.settings.first {
-            it.defaultFrictionModes == listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING)
+        val settings = withTimeout(5_000) {
+            repository.settings.first {
+                it.defaultFrictionModes == listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING)
+            }
         }
         assertEquals(
             listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING),
             settings.defaultFrictionModes,
         )
+        val storedSequence = withTimeout(5_000) {
+            dataStore.data.first()[stringPreferencesKey("default_friction_sequence")]
+        }
         assertEquals(
             "TIME_LIMIT,BREATHING",
-            dataStore.data.first()[stringPreferencesKey("default_friction_sequence")],
+            storedSequence,
         )
     }
 
@@ -81,16 +87,20 @@ class SettingsRepositoryTest {
                 FrictionMode.TIME_LIMIT,
             ),
         )
-        repository.settings.first {
-            it.defaultFrictionModes ==
-                listOf(FrictionMode.BREATHING, FrictionMode.INTENTION, FrictionMode.TIME_LIMIT)
+        withTimeout(5_000) {
+            repository.settings.first {
+                it.defaultFrictionModes ==
+                    listOf(FrictionMode.BREATHING, FrictionMode.INTENTION, FrictionMode.TIME_LIMIT)
+            }
         }
 
         repository.moveDefaultFrictionMode(FrictionMode.TIME_LIMIT, -1)
 
-        val settings = repository.settings.first {
-            it.defaultFrictionModes ==
-                listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT, FrictionMode.INTENTION)
+        val settings = withTimeout(5_000) {
+            repository.settings.first {
+                it.defaultFrictionModes ==
+                    listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT, FrictionMode.INTENTION)
+            }
         }
         assertEquals(
             listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT, FrictionMode.INTENTION),
@@ -101,18 +111,24 @@ class SettingsRepositoryTest {
     @Test
     fun `toggling a mode appends it to the sequence`() = runTest {
         repository.setDefaultFrictionModes(listOf(FrictionMode.BREATHING))
-        repository.settings.first { it.defaultFrictionModes == listOf(FrictionMode.BREATHING) }
+        withTimeout(5_000) {
+            repository.settings.first { it.defaultFrictionModes == listOf(FrictionMode.BREATHING) }
+        }
 
         repository.toggleDefaultFrictionMode(FrictionMode.TIME_LIMIT)
-        repository.settings.first {
-            it.defaultFrictionModes ==
-                listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT)
+        withTimeout(5_000) {
+            repository.settings.first {
+                it.defaultFrictionModes ==
+                    listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT)
+            }
         }
         repository.toggleDefaultFrictionMode(FrictionMode.INTENTION)
 
-        val settings = repository.settings.first {
-            it.defaultFrictionModes ==
-                listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT, FrictionMode.INTENTION)
+        val settings = withTimeout(5_000) {
+            repository.settings.first {
+                it.defaultFrictionModes ==
+                    listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT, FrictionMode.INTENTION)
+            }
         }
         assertEquals(
             listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT, FrictionMode.INTENTION),
@@ -127,17 +143,22 @@ class SettingsRepositoryTest {
             listOf(FrictionMode.TIME_LIMIT, FrictionMode.INTENTION),
         )
 
-        val settings = repository.settings.first {
-            it.appModeOverrides["com.example"] ==
-                listOf(FrictionMode.TIME_LIMIT, FrictionMode.INTENTION)
+        val settings = withTimeout(5_000) {
+            repository.settings.first {
+                it.appModeOverrides["com.example"] ==
+                    listOf(FrictionMode.TIME_LIMIT, FrictionMode.INTENTION)
+            }
         }
         assertEquals(
             listOf(FrictionMode.TIME_LIMIT, FrictionMode.INTENTION),
             settings.appModeOverrides["com.example"],
         )
+        val storedOverrides = withTimeout(5_000) {
+            dataStore.data.first()[stringPreferencesKey("app_mode_overrides")]
+        }
         assertEquals(
             "com.example=TIME_LIMIT,INTENTION",
-            dataStore.data.first()[stringPreferencesKey("app_mode_overrides")],
+            storedOverrides,
         )
     }
 
@@ -148,10 +169,12 @@ class SettingsRepositoryTest {
         repository.toggleScheduleDay(DayOfWeek.MONDAY)
         repository.setHistoryRetentionDays(30)
 
-        val settings = repository.settings.first {
-            it.scheduleEnabled &&
-                it.historyRetentionDays == 30 &&
-                DayOfWeek.MONDAY !in it.scheduleDays
+        val settings = withTimeout(5_000) {
+            repository.settings.first {
+                it.scheduleEnabled &&
+                    it.historyRetentionDays == 30 &&
+                    DayOfWeek.MONDAY !in it.scheduleDays
+            }
         }
         assertEquals(true, settings.scheduleEnabled)
         assertEquals(22 * 60, settings.scheduleStartMinutes)
@@ -174,10 +197,14 @@ class SettingsRepositoryTest {
         val until = System.currentTimeMillis() + 60_000L
         repository.setAppSnoozedUntil("com.example", until)
 
-        repository.settings.first { it.snoozedUntilMillis["com.example"] == until }
+        withTimeout(5_000) {
+            repository.settings.first { it.snoozedUntilMillis["com.example"] == until }
+        }
         repository.clearAppSnooze("com.example")
 
-        val cleared = repository.settings.first { it.snoozedUntilMillis.isEmpty() }
+        val cleared = withTimeout(5_000) {
+            repository.settings.first { it.snoozedUntilMillis.isEmpty() }
+        }
         assertEquals(emptyMap<String, Long>(), cleared.snoozedUntilMillis)
     }
 
@@ -188,9 +215,11 @@ class SettingsRepositoryTest {
                 setOf("TIME_LIMIT", "BREATHING")
         }
 
-        val settings = repository.settings.first {
-            it.defaultFrictionModes ==
-                listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT)
+        val settings = withTimeout(5_000) {
+            repository.settings.first {
+                it.defaultFrictionModes ==
+                    listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT)
+            }
         }
         assertEquals(
             listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT),
