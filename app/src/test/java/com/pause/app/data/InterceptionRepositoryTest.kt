@@ -11,9 +11,12 @@ import com.pause.app.data.repository.InterceptionRepository
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.HistoryArchiveEntry
 import com.pause.app.domain.model.InterventionOutcome
+import com.pause.app.domain.model.StatsRange
+import com.pause.app.domain.model.TimeOfDayBucket
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -258,6 +261,143 @@ class InterceptionRepositoryTest {
         assertEquals(0, stats.walkedAway)
         assertNull(stats.mostTriggeredPackage)
         assertEquals(0, stats.mostTriggeredCount)
+    }
+
+    @Test
+    fun `observeStats respects exact TODAY, SEVEN_DAYS, and THIRTY_DAYS boundaries`() = runTest {
+        // Clock is fixed at 2026-05-14T12:00:00Z (UTC):
+        // TODAY:       [2026-05-14T00:00:00Z, 2026-05-15T00:00:00Z)
+        // SEVEN_DAYS:  [2026-05-08T00:00:00Z, 2026-05-15T00:00:00Z)
+        // THIRTY_DAYS: [2026-04-15T00:00:00Z, 2026-05-15T00:00:00Z)
+        insert(INSTAGRAM, "Instagram", at("2026-04-14T23:59:59"), InterventionOutcome.PROCEEDED)
+        insert(INSTAGRAM, "Instagram", at("2026-04-15T00:00:00"), InterventionOutcome.WALKED_AWAY)
+        insert(INSTAGRAM, "Instagram", at("2026-05-07T23:59:59"), InterventionOutcome.PROCEEDED)
+        insert(TIKTOK, "TikTok", at("2026-05-08T00:00:00"), InterventionOutcome.WALKED_AWAY)
+        insert(TIKTOK, "TikTok", at("2026-05-14T09:00:00"), InterventionOutcome.WALKED_AWAY)
+        insert(INSTAGRAM, "Instagram", at("2026-05-14T23:59:59"), InterventionOutcome.PROCEEDED)
+        // Tomorrow must never be included in any range.
+        insert(INSTAGRAM, "Instagram", at("2026-05-15T00:00:00"), InterventionOutcome.PROCEEDED)
+
+        val today = repository.observeStats(StatsRange.TODAY).first()
+        assertEquals(StatsRange.TODAY, today.range)
+        assertEquals(2, today.attempts)
+        assertEquals(1, today.walkedAway)
+        assertEquals(50, today.walkedAwayPercent)
+
+        val sevenDays = repository.observeStats(StatsRange.SEVEN_DAYS).first()
+        assertEquals(StatsRange.SEVEN_DAYS, sevenDays.range)
+        assertEquals(3, sevenDays.attempts)
+        assertEquals(2, sevenDays.walkedAway)
+        assertEquals(66, sevenDays.walkedAwayPercent)
+        assertEquals(TIKTOK, sevenDays.mostTriggeredPackage)
+        assertEquals("TikTok", sevenDays.mostTriggeredLabel)
+        assertEquals(2, sevenDays.mostTriggeredCount)
+
+        val thirtyDays = repository.observeStats(StatsRange.THIRTY_DAYS).first()
+        assertEquals(StatsRange.THIRTY_DAYS, thirtyDays.range)
+        assertEquals(5, thirtyDays.attempts)
+        assertEquals(3, thirtyDays.walkedAway)
+        assertEquals(60, thirtyDays.walkedAwayPercent)
+        assertEquals(INSTAGRAM, thirtyDays.mostTriggeredPackage)
+        assertEquals(3, thirtyDays.mostTriggeredCount)
+    }
+
+    @Test
+    fun `observeStats orders topApps by attempts descending then label ascending and caps at 5`() =
+        runTest {
+            val apps = listOf(
+                "com.example.f" to "Zeta",
+                "com.example.e" to "Epsilon",
+                "com.example.d" to "Delta",
+                "com.example.c" to "Charlie",
+                "com.example.b" to "Beta",
+                "com.example.a" to "Alpha",
+            )
+            // Alpha & Beta tied at 2 attempts; Charlie, Delta, Epsilon, Zeta at 1 attempt each.
+            insert("com.example.b", "Beta", at("2026-05-14T08:00:00"), InterventionOutcome.WALKED_AWAY)
+            insert("com.example.b", "Beta", at("2026-05-14T09:00:00"), InterventionOutcome.PROCEEDED)
+            insert("com.example.a", "Alpha", at("2026-05-14T10:00:00"), InterventionOutcome.WALKED_AWAY)
+            insert("com.example.a", "Alpha", at("2026-05-14T11:00:00"), InterventionOutcome.WALKED_AWAY)
+            for ((pkg, label) in apps.take(4)) {
+                insert(pkg, label, at("2026-05-14T13:00:00"), InterventionOutcome.PROCEEDED)
+            }
+
+            val stats = repository.observeStats(StatsRange.SEVEN_DAYS).first()
+
+            assertEquals(5, stats.topApps.size)
+            assertEquals(
+                listOf("Alpha", "Beta", "Charlie", "Delta", "Epsilon"),
+                stats.topApps.map { it.appLabel },
+            )
+            assertEquals(2, stats.topApps[0].attempts)
+            assertEquals(2, stats.topApps[0].walkedAway)
+            assertEquals(2, stats.topApps[1].attempts)
+            assertEquals(1, stats.topApps[1].walkedAway)
+            assertEquals("com.example.a", stats.mostTriggeredPackage)
+            assertEquals("Alpha", stats.mostTriggeredLabel)
+            assertEquals(2, stats.mostTriggeredCount)
+        }
+
+    @Test
+    fun `observeStats buckets time of day in local timezone and identifies peak bucket`() =
+        runTest {
+            // Use America/New_York (EDT = UTC-4 in May) to verify local-zone bucketing,
+            // NOT UTC hours!
+            val nyZone = ZoneId.of("America/New_York")
+            val nyClock = Clock.fixed(Instant.parse("2026-05-14T16:00:00Z"), nyZone)
+            val nyRepo = InterceptionRepository(dao, nyClock)
+
+            fun atNy(localDateTime: String): Long =
+                LocalDateTime.parse(localDateTime).atZone(nyZone).toInstant().toEpochMilli()
+
+            // Night: 00:00, 04:59, 22:00 (3 attempts, 1 walked away)
+            insert(INSTAGRAM, "Instagram", atNy("2026-05-14T00:00:00"), InterventionOutcome.WALKED_AWAY)
+            insert(INSTAGRAM, "Instagram", atNy("2026-05-14T04:59:59"), InterventionOutcome.PROCEEDED)
+            insert(INSTAGRAM, "Instagram", atNy("2026-05-14T22:00:00"), InterventionOutcome.PROCEEDED)
+            // Morning: 05:00, 11:59 (2 attempts, 1 walked away)
+            insert(TIKTOK, "TikTok", atNy("2026-05-14T05:00:00"), InterventionOutcome.WALKED_AWAY)
+            insert(TIKTOK, "TikTok", atNy("2026-05-14T11:59:59"), InterventionOutcome.PROCEEDED)
+            // Afternoon: 12:00, 16:59 (2 attempts, 0 walked away)
+            insert(INSTAGRAM, "Instagram", atNy("2026-05-14T12:00:00"), InterventionOutcome.PROCEEDED)
+            insert(INSTAGRAM, "Instagram", atNy("2026-05-14T16:59:59"), InterventionOutcome.PROCEEDED)
+            // Evening: 17:00, 19:30, 20:15, 21:59 (4 attempts, 3 walked away) -> peak!
+            insert(INSTAGRAM, "Instagram", atNy("2026-05-14T17:00:00"), InterventionOutcome.WALKED_AWAY)
+            insert(INSTAGRAM, "Instagram", atNy("2026-05-14T19:30:00"), InterventionOutcome.WALKED_AWAY)
+            insert(TIKTOK, "TikTok", atNy("2026-05-14T20:15:00"), InterventionOutcome.WALKED_AWAY)
+            insert(TIKTOK, "TikTok", atNy("2026-05-14T21:59:59"), InterventionOutcome.PROCEEDED)
+
+            val stats = nyRepo.observeStats(StatsRange.TODAY).first()
+            val byBucket = stats.timeOfDay.associateBy { it.bucket }
+
+            assertEquals(11, stats.attempts)
+            assertEquals(5, stats.walkedAway)
+            assertEquals(TimeOfDayBucket.EVENING, stats.peakBucket)
+
+            assertEquals(2, byBucket.getValue(TimeOfDayBucket.MORNING).attempts)
+            assertEquals(1, byBucket.getValue(TimeOfDayBucket.MORNING).walkedAway)
+            assertEquals(2, byBucket.getValue(TimeOfDayBucket.AFTERNOON).attempts)
+            assertEquals(0, byBucket.getValue(TimeOfDayBucket.AFTERNOON).walkedAway)
+            assertEquals(4, byBucket.getValue(TimeOfDayBucket.EVENING).attempts)
+            assertEquals(3, byBucket.getValue(TimeOfDayBucket.EVENING).walkedAway)
+            assertEquals(3, byBucket.getValue(TimeOfDayBucket.NIGHT).attempts)
+            assertEquals(1, byBucket.getValue(TimeOfDayBucket.NIGHT).walkedAway)
+        }
+
+    @Test
+    fun `observeStats on empty database returns zeroed buckets and null peak`() = runTest {
+        val stats = repository.observeStats(StatsRange.THIRTY_DAYS).first()
+
+        assertEquals(StatsRange.THIRTY_DAYS, stats.range)
+        assertEquals(0, stats.attempts)
+        assertEquals(0, stats.walkedAway)
+        assertEquals(0, stats.walkedAwayPercent)
+        assertEquals(emptyList<Any>(), stats.topApps)
+        assertNull(stats.mostTriggeredPackage)
+        assertNull(stats.mostTriggeredLabel)
+        assertEquals(0, stats.mostTriggeredCount)
+        assertNull(stats.peakBucket)
+        assertEquals(TimeOfDayBucket.entries, stats.timeOfDay.map { it.bucket })
+        assertEquals(listOf(0, 0, 0, 0), stats.timeOfDay.map { it.attempts })
     }
 
     private suspend fun insert(

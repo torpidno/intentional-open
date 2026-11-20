@@ -2,6 +2,7 @@ package com.pause.app.di
 
 import android.content.Context
 import androidx.room.Room
+import com.pause.app.data.local.DailyUsageDao
 import com.pause.app.data.local.InterventionLogDao
 import com.pause.app.data.local.PauseDatabase
 import dagger.Module
@@ -23,10 +24,17 @@ object DatabaseModule {
             PauseDatabase::class.java,
             "pause.db",
         )
-            .addMigrations(PauseDatabase.MIGRATION_1_2)
+            .addMigrations(
+                PauseDatabase.MIGRATION_1_2,
+                PauseDatabase.MIGRATION_2_3,
+            )
             .build()
 
     @Provides
     fun provideInterventionLogDao(database: PauseDatabase): InterventionLogDao =
         database.interventionLogDao()
+
+    @Provides
+    fun provideDailyUsageDao(database: PauseDatabase): DailyUsageDao =
+        database.dailyUsageDao()
 }

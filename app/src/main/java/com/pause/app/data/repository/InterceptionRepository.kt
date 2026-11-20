@@ -6,7 +6,10 @@ import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.HistoryArchiveEntry
 import com.pause.app.domain.model.InterventionOutcome
 import com.pause.app.domain.model.InterventionRecord
+import com.pause.app.domain.model.RangeStats
+import com.pause.app.domain.model.StatsRange
 import com.pause.app.domain.model.TodayStats
+import com.pause.app.domain.model.aggregateRangeStats
 import java.time.Clock
 import java.time.LocalDate
 import javax.inject.Inject
@@ -45,6 +48,22 @@ class InterceptionRepository @Inject constructor(
                 mostTriggeredPackage = mostTriggered?.packageName,
                 mostTriggeredLabel = mostTriggered?.appLabel,
                 mostTriggeredCount = mostTriggered?.count ?: 0,
+            )
+        }
+    }
+
+    /**
+     * Aggregated attempts, walk-aways, top apps, and time-of-day distribution
+     * over [range] ending at the end of the current local day.
+     */
+    fun observeStats(range: StatsRange): Flow<RangeStats> {
+        val (startMillis, endMillis) = rangeBounds(range)
+        val zone = clock.zone
+        return dao.observeInRange(startMillis, endMillis).map { rows ->
+            aggregateRangeStats(
+                records = rows.map { it.toRecord() },
+                range = range,
+                zone = zone,
             )
         }
     }
@@ -196,6 +215,20 @@ class InterceptionRepository @Inject constructor(
         val today = LocalDate.now(clock)
         val start = today.atStartOfDay(zone).toInstant().toEpochMilli()
         val end = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        return start to end
+    }
+
+    private fun rangeBounds(range: StatsRange): Pair<Long, Long> {
+        val zone = clock.zone
+        val today = LocalDate.now(clock)
+        val start = today.minusDays((range.days - 1).toLong())
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
+        val end = today.plusDays(1)
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
         return start to end
     }
 }

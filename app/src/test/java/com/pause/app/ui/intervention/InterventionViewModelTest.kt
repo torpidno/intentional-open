@@ -649,6 +649,8 @@ class InterventionViewModelTest {
             endMillis: Long,
         ): Flow<AppTriggerCount?> = flowOf(null)
 
+        override fun observeInRange(startMillis: Long, endMillis: Long): Flow<List<InterventionLogEntity>> = flowOf(emptyList())
+
         override fun observeRecent(limit: Int): Flow<List<InterventionLogEntity>> =
             flowOf(emptyList())
 

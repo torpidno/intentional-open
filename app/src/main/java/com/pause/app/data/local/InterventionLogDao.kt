@@ -68,6 +68,15 @@ interface InterventionLogDao {
     @Query(
         """
         SELECT * FROM intervention_logs
+        WHERE timestampMillis >= :startMillis AND timestampMillis < :endMillis
+        ORDER BY timestampMillis ASC
+        """,
+    )
+    fun observeInRange(startMillis: Long, endMillis: Long): Flow<List<InterventionLogEntity>>
+
+    @Query(
+        """
+        SELECT * FROM intervention_logs
         ORDER BY timestampMillis DESC, id DESC
         LIMIT :limit
         """,
