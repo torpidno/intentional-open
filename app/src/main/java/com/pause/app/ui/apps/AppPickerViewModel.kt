@@ -2,9 +2,11 @@ package com.pause.app.ui.apps
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.data.preferences.SettingsRepository
 import com.pause.app.data.repository.InstalledAppsRepository
 import com.pause.app.domain.model.InstalledApp
+import com.pause.app.domain.model.StrictModeChallenge
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +21,10 @@ data class AppPickerUiState(
     val apps: List<InstalledApp> = emptyList(),
     val selectedPackages: Set<String> = emptySet(),
     val isLoading: Boolean = true,
+    val strictModeEnabled: Boolean = false,
+    val strictModeChallenge: StrictModeChallenge = StrictModeChallenge.DELAY,
+    val strictModeDelaySeconds: Int = PauseSettings.DEFAULT_STRICT_MODE_DELAY_SECONDS,
+    val strictModePhrase: String = PauseSettings.DEFAULT_STRICT_MODE_PHRASE,
 )
 
 @HiltViewModel
@@ -49,6 +55,10 @@ class AppPickerViewModel @Inject constructor(
             apps = filtered,
             selectedPackages = settings.monitoredPackages,
             isLoading = refreshing && apps.isEmpty(),
+            strictModeEnabled = settings.strictModeEnabled,
+            strictModeChallenge = settings.strictModeChallenge,
+            strictModeDelaySeconds = settings.strictModeDelaySeconds,
+            strictModePhrase = settings.effectiveStrictModePhrase,
         )
     }.stateIn(
         scope = viewModelScope,

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Home profile switcher -->
+    <string name="home_profile_title">Profile</string>
+    <string name="home_profile_custom">Custom</string>
+    <string name="home_profile_auto_badge">Auto · %1$s</string>
+    <string name="home_profile_auto_caption">Scheduled profile %1$s is active right now.</string>
+
+    <!-- Home stats ranges and trends -->
+    <string name="home_stats_overview_title">Activity</string>
+    <string name="home_stats_range_today">Today</string>
+    <string name="home_stats_range_7d">7 days</string>
+    <string name="home_stats_range_30d">30 days</string>
+    <string name="home_stats_walked_away_rate">%1$d%% walked away</string>
+    <string name="home_stats_top_apps">Top triggered apps</string>
+    <plurals name="home_stats_app_pauses">
+        <item quantity="one">%1$d pause</item>
+        <item quantity="other">%1$d pauses</item>
+    </plurals>
+    <string name="home_stats_app_trend">%1$s · %2$d walked away</string>
+    <string name="home_stats_time_of_day">Time of day</string>
+    <string name="home_stats_peak_bucket">Most active: %1$s</string>
+    <string name="home_bucket_morning">Morning</string>
+    <string name="home_bucket_afternoon">Afternoon</string>
+    <string name="home_bucket_evening">Evening</string>
+    <string name="home_bucket_night">Night</string>
+
+    <!-- Home daily limits -->
+    <string name="home_daily_limit_unset">Daily limit</string>
+    <string name="home_daily_limit_usage">%1$d / %2$d min</string>
+    <string name="home_daily_limit_reached">Limit reached · %1$d / %2$d min</string>
+    <string name="daily_limit_dialog_title">Daily limit · %1$s</string>
+    <string name="daily_limit_dialog_body">Set a daily foreground budget. When you reach it, Pause will remind you before opening the app.</string>
+    <string name="daily_limit_used_today">Used today: %1$d min</string>
+    <string name="daily_limit_usage_access_notice">Usage Access isn\'t granted yet. Enable it in Settings so Pause can track today\'s foreground time.</string>
+    <string name="daily_limit_open_settings">Open Settings</string>
+    <string name="daily_limit_option_none">No limit</string>
+    <string name="daily_limit_option_minutes">%1$d min</string>
+    <string name="daily_limit_dialog_close">Cancel</string>
+
+    <!-- Strict mode action descriptions on Home and App Picker -->
+    <string name="home_strict_action_disable_pause">Turn Pause off</string>
+    <string name="home_strict_action_pause_app">Pause monitoring for %1$s</string>
+    <string name="home_strict_action_snooze_app">Snooze %1$s for %2$d min</string>
+    <string name="home_strict_action_remove_daily_limit">Remove the daily limit for %1$s</string>
+    <string name="home_strict_action_raise_daily_limit">Raise the daily limit for %1$s to %2$d min</string>
+    <string name="picker_strict_action_unmonitor_app">Stop monitoring %1$s</string>
+</resources>

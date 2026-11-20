@@ -34,6 +34,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,7 +51,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pause.app.R
+import com.pause.app.domain.model.InstalledApp
 import com.pause.app.ui.components.AppGlyph
+import com.pause.app.ui.components.StrictModeChallengeDialog
 import com.pause.app.ui.components.pauseClickable
 import com.pause.app.ui.theme.PauseDimens
 
@@ -59,6 +64,15 @@ fun AppPickerScreen(
     viewModel: AppPickerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var pendingUnmonitorApp by remember { mutableStateOf<InstalledApp?>(null) }
+
+    fun handleAppToggle(app: InstalledApp, isCurrentlySelected: Boolean) {
+        if (isCurrentlySelected && state.strictModeEnabled) {
+            pendingUnmonitorApp = app
+        } else {
+            viewModel.toggle(app.packageName)
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -208,9 +222,7 @@ fun AppPickerScreen(
                                             .pauseClickable(
                                                 shape = shape,
                                                 minHeight = 72.dp,
-                                                onClick = {
-                                                    viewModel.toggle(app.packageName)
-                                                },
+                                                onClick = { handleAppToggle(app, selected) },
                                             )
                                             .padding(
                                                 horizontal = PauseDimens.space16,
@@ -242,9 +254,7 @@ fun AppPickerScreen(
                                         Spacer(Modifier.width(PauseDimens.space8))
                                         Checkbox(
                                             checked = selected,
-                                            onCheckedChange = {
-                                                viewModel.toggle(app.packageName)
-                                            },
+                                            onCheckedChange = { handleAppToggle(app, selected) },
                                             modifier = Modifier.semantics {
                                                 contentDescription = app.label
                                             },
@@ -266,5 +276,24 @@ fun AppPickerScreen(
                 }
             }
         }
+    }
+
+    pendingUnmonitorApp?.let { app ->
+        StrictModeChallengeDialog(
+            actionDescription = stringResource(
+                R.string.picker_strict_action_unmonitor_app,
+                app.label,
+            ),
+            challenge = state.strictModeChallenge,
+            delaySeconds = state.strictModeDelaySeconds,
+            phrase = state.strictModePhrase,
+            onDismiss = { pendingUnmonitorApp = null },
+            onConfirmed = {
+                pendingUnmonitorApp = null
+                if (app.packageName in state.selectedPackages) {
+                    viewModel.toggle(app.packageName)
+                }
+            },
+        )
     }
 }
