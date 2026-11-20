@@ -7,6 +7,8 @@ import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.data.preferences.SettingsRepository
 import com.pause.app.data.repository.HistoryRetentionManager
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.PauseProfile
+import com.pause.app.domain.model.StrictModeChallenge
 import com.pause.app.util.PermissionChecker
 import com.pause.app.util.PermissionSnapshot
 import com.pause.app.util.PermissionType
@@ -101,5 +103,37 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setHistoryRetentionDays(days)
             historyRetentionManager.pruneNow(days)
         }
+    }
+
+    fun saveProfile(profile: PauseProfile, activate: Boolean = false) {
+        viewModelScope.launch { settingsRepository.saveProfile(profile, activate) }
+    }
+
+    fun selectProfile(profileId: String?) {
+        viewModelScope.launch { settingsRepository.selectProfile(profileId) }
+    }
+
+    fun deleteProfile(profileId: String) {
+        viewModelScope.launch { settingsRepository.deleteProfile(profileId) }
+    }
+
+    fun setAutoSwitchProfiles(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setAutoSwitchProfiles(enabled) }
+    }
+
+    fun setStrictModeEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setStrictModeEnabled(enabled) }
+    }
+
+    fun setStrictModeChallenge(challenge: StrictModeChallenge) {
+        viewModelScope.launch { settingsRepository.setStrictModeChallenge(challenge) }
+    }
+
+    fun setStrictModeDelaySeconds(seconds: Int) {
+        viewModelScope.launch { settingsRepository.setStrictModeDelaySeconds(seconds) }
+    }
+
+    fun setStrictModePhrase(phrase: String) {
+        viewModelScope.launch { settingsRepository.setStrictModePhrase(phrase) }
     }
 }

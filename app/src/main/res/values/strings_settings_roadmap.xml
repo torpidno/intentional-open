@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Optional Usage Access permission (Roadmap #3) -->
+    <string name="permission_optional_badge">Optional</string>
+    <string name="permission_usage_access_title">Daily usage access (optional)</string>
+    <string name="permission_usage_access_body">Enables OS-level daily app budgets using Android\'s UsageStatsManager. Pause reads only foreground totals for your apps—never screen content—and uses no internet.</string>
+
+    <!-- Profiles (Roadmap #2) -->
+    <string name="settings_profiles_title">Profiles</string>
+    <string name="settings_profiles_body">Keep separate app lists, friction sequences, and schedules for different parts of your day.</string>
+    <string name="settings_profiles_empty">No profiles yet. Start from a preset below or save your current settings as a custom profile.</string>
+    <string name="settings_profiles_active_badge">Active</string>
+    <string name="settings_profiles_active_banner">Editing “%1$s”. Changes to monitored apps, default friction, and active hours save to this profile.</string>
+    <string name="settings_profiles_unlink">Unlink</string>
+    <string name="settings_profiles_applies_to_active">Applies to active profile: %1$s</string>
+    <string name="settings_profiles_manual_only">Manual only</string>
+    <string name="settings_profiles_days_every_day">Every day</string>
+    <string name="settings_profiles_days_weekdays">Mon–Fri</string>
+    <string name="settings_profiles_days_weekend">Sat–Sun</string>
+    <string name="settings_profiles_all_day">All day</string>
+    <string name="settings_profiles_time_range">%1$s–%2$s</string>
+    <string name="settings_profiles_schedule_summary">%1$s · %2$s</string>
+    <string name="settings_profiles_row_meta">%1$s · %2$s</string>
+    <plurals name="settings_profiles_app_count">
+        <item quantity="one">%1$d app</item>
+        <item quantity="other">%1$d apps</item>
+    </plurals>
+    <string name="settings_profiles_quick_add">Add a profile</string>
+    <string name="settings_profiles_preset_work">Work</string>
+    <string name="settings_profiles_preset_evening">Evening</string>
+    <string name="settings_profiles_preset_weekend">Weekend</string>
+    <string name="settings_profiles_preset_custom">Custom</string>
+    <string name="settings_profiles_auto_switch_title">Auto-switch by schedule</string>
+    <string name="settings_profiles_auto_switch_body">Scheduled profiles activate automatically during their time window. You can still switch manually anytime.</string>
+    <string name="settings_profiles_custom_dialog_title">New custom profile</string>
+    <string name="settings_profiles_custom_dialog_body">Clones your current monitored apps, default friction, and active hours into a new profile.</string>
+    <string name="settings_profiles_custom_name_label">Profile name</string>
+    <string name="settings_profiles_custom_name_placeholder">e.g. Deep work</string>
+    <string name="settings_profiles_custom_create">Create</string>
+    <string name="cd_delete_profile">Delete %1$s profile</string>
+
+    <!-- Strict mode (Roadmap #5) -->
+    <string name="settings_strict_mode_title">Strict mode</string>
+    <string name="settings_strict_mode_body">Adds a short, recoverable delay or typed phrase before disabling Pause, unmonitoring or pausing apps, or loosening rules. Strict mode never locks you out.</string>
+    <string name="settings_strict_mode_enabled">Require check before loosening rules</string>
+    <string name="settings_strict_mode_challenge_label">Challenge type</string>
+    <string name="settings_strict_mode_challenge_delay">Countdown delay</string>
+    <string name="settings_strict_mode_challenge_phrase">Typed phrase</string>
+    <string name="settings_strict_mode_delay_label">Delay length</string>
+    <string name="settings_strict_mode_delay_option">%1$d s</string>
+    <string name="settings_strict_mode_phrase_label">Confirmation phrase</string>
+    <string name="settings_strict_mode_phrase_caption">This phrase is always displayed during challenges, so you can never forget it.</string>
+    <string name="settings_strict_mode_phrase_save">Save phrase</string>
+    <string name="settings_strict_mode_phrase_reset">Reset to default</string>
+
+    <!-- Strict mode guard action descriptions -->
+    <string name="strict_action_disable_strict_mode">Turn off strict mode</string>
+    <string name="strict_action_disable_schedule">Turn off active hours</string>
+    <string name="strict_action_shorten_breathing">Shorten breathing length to %1$d s</string>
+    <string name="strict_action_lengthen_cooldown">Increase grace period to %1$d min</string>
+    <string name="strict_action_shorten_strict_delay">Shorten strict mode delay to %1$d s</string>
+    <string name="strict_action_delete_profile">Delete the “%1$s” profile</string>
+</resources>

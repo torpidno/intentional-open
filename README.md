@@ -2,8 +2,10 @@
 
 An intentional app opener for Android. Pause intercepts the apps you choose and
 adds a short moment of friction — a breath, an intention, a time limit, or an
-ordered combination of them — before letting you continue. Active hours,
-temporary snoozes, retention controls, and local CSV history are also built in.
+ordered combination of them — before letting you continue. Named profiles,
+optional daily usage budgets, 7/30-day local trends, optional strict mode,
+active hours, temporary snoozes, retention controls, and local CSV history are
+also built in.
 
 Built with Kotlin, Jetpack Compose (Material 3), Hilt, Room and DataStore.
 No internet permission, no analytics, no accounts, no cloud sync.
@@ -110,7 +112,7 @@ backup of `release-keystore.jks` somewhere outside this repository.
 
 ## First-run setup
 
-Pause needs four system permissions. The app walks you through each one in
+Pause needs four core system permissions. The app walks you through each one in
 **Settings → Setup** and re-checks their status every time you return:
 
 1. **Accessibility service** — detects when a monitored app enters the
@@ -124,6 +126,11 @@ Pause needs four system permissions. The app walks you through each one in
    process, the screen is locked, or the overlay cannot be shown. This is still
    fully offline.
 
+An optional fifth card, **Daily usage access (optional)**, grants Android's
+Usage Access (`UsageStatsManager`) if you want OS-level per-app daily usage
+budgets. It is not counted toward the 4-step core setup, reads only foreground
+time totals, and stays completely offline.
+
 Then tap **Add apps**, search for the apps that pull you in, and select them.
 Each app can use the global friction sequence or its own ordered sequence. In
 **Settings → Default friction** and in an app's sequence dialog, use the up/down
@@ -136,6 +143,22 @@ mode's enum ordinal.
 
 Other local controls:
 
+- **Profiles** — keep named configuration bundles (Work, Evening, Weekend, or
+  custom) with their own monitored apps, friction sequences, and schedules.
+  Switch manually from Home or Settings, or enable **Auto-switch by schedule**
+  so scheduled profiles activate automatically during their window.
+- **Daily total limits** — set an optional per-app daily budget (15–120 min) on
+  any monitored app. Foreground usage is tracked locally via `UsageStatsManager`
+  and cached in Room v3 (`daily_usage`). Once a budget is reached, Pause shows a
+  calm blocked screen until local midnight.
+- **Stats ranges and trends** — switch the dashboard between **Today**,
+  **7 days**, and **30 days** to view walk-away rates, top triggered apps, and
+  local time-of-day activity insights without any network access.
+- **Optional strict mode** — opt in to a recoverable **Countdown delay**
+  (15/30/60 s) or **Typed phrase** (always displayed on screen so you can never
+  be locked out) before turning Pause off, pausing/snoozing/unmonitoring apps,
+  loosening friction timings or daily limits, disabling active hours, or
+  deleting profiles. Tightening protections always applies immediately.
 - **Active hours** — choose days and a local start/end time. Outside the window,
   monitored apps open normally. Overnight windows are supported.
 - **Snooze** — temporarily skip an individual app for 15 minutes or 1 hour. The
@@ -152,32 +175,45 @@ Other local controls:
 2. Press home, then open that app.
 3. The pause screen should appear within a fraction of a second.
 
-If nothing appears, verify all four permissions are green and that the master
-toggle on the home screen is on.
+If nothing appears, verify all four core permissions are green and that the
+master toggle on the home screen is on.
 
 ## How it works
 
 ```
 AccessibilityService (TYPE_WINDOW_STATE_CHANGED only)
-        │  package filter narrowed to monitored apps at runtime
+        │  package filter narrowed to active + auto-scheduled monitored apps
+        ▼
+InterceptionGate (active/scheduled profile, active hours, snooze, daily budget, cooldown)
+        │
         ▼
 PauseInterventionActivity (full-screen, own task, excluded from recents)
         │
+        ├── Daily budget reached: calm blocked screen until local midnight
         ├── Breathing pause: end-timestamp countdown, CTA unlocks
         ├── Intention check: reason chip or note required
         ├── Session limit: 5 / 15 / 30 min, timer + reminder overlay
-        ├── Any enabled combination runs in order; intermediate steps use Next
-        └── Active-hours schedule and per-app snooze are checked before launch
+        └── Any enabled combination runs in order; intermediate steps use Next
         │
         ▼
-Room (attempts, outcomes, intentions)  +  DataStore (settings)
+Room v3 (intervention_logs + daily_usage)  +  DataStore (settings, profiles, strict mode)
 ```
 
+- **Profiles and schedules:** when **Auto-switch by schedule** is enabled, the
+  gate evaluates matching scheduled profiles against the local clock and the
+  accessibility service widens its package filter only to apps in active or
+  scheduled profiles. Manual profile switches update top-level DataStore keys
+  atomically.
+- **Daily total limits:** when an app has a daily budget configured, the service
+  checks today's local foreground total via `DailyBudgetRepository` (backed by
+  `UsageStatsManager` and cached per day in Room v3 `daily_usage`). Exceeding
+  the budget bypasses grace-period cooldowns and opens the budget-blocked screen
+  until local midnight.
 - **Cooldown:** after continuing, the same app will not be intercepted again for
   the configured grace period (5/10/15 min). A short launch guard also absorbs
   the splash → main-activity event burst so the overlay cannot loop.
-- **Schedule and snooze:** the gate checks the global local-time window and the
-  per-app snooze deadline before the device/cooldown checks. An inactive window
+- **Schedule and snooze:** the gate checks the active-hours local-time window
+  and per-app snooze deadline before device/cooldown checks. An inactive window
   or live snooze returns without showing the overlay; no alarm is needed for a
   snooze to expire.
 - **History maintenance:** retention deletes rows older than the configured
@@ -208,7 +244,8 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
 
 - `InterceptionGateTest` — enable/disable, monitored and paused apps, ignored
   packages, lock/screen-off, duplicate-event debounce, launch guard, cooldown,
-  active-hours, and snooze policy.
+  active-hours, snooze policy, scheduled profiles, and `DAILY_LIMIT_EXCEEDED`
+  budget blocking.
 - `CooldownTrackerTest` — per-app cooldowns, extension without shortening,
   exact expiry, clearing and invalid durations.
 - `SessionLimitManagerTest` — virtual-time timer emission, cancellation,
@@ -219,29 +256,40 @@ Room (attempts, outcomes, intentions)  +  DataStore (settings)
 - `DataStoreSessionPersistenceTest` — a file-backed Preferences DataStore with
   an injected read failure and an injected first-write failure, verifying the
   production wrapper's read fallback and the manager's cleanup write.
-- `InterventionViewModelTest` — a gated persistence write proves the target-app
-  effect waits for success; a failed write keeps the app closed, exposes the
-  retry state and launches only after a successful retry. It also recreates the
-  ViewModel from `SavedStateHandle` to prove the step, intention and limit
-  survive process death.
+- `InterventionViewModelTest` — unlock rules across breathing/intention/limit
+  modes, 3-step ordered sequences (verifying intermediate Next never starts a
+  session), mid-sequence walk-away, daily-limit-blocked behavior, gated
+  persistence writes with retry on failure, and `SavedStateHandle` process-death
+  restoration.
+- `HomeViewModelTest` — switching between Today / 7-day / 30-day stats ranges,
+  atomic profile switching, daily limit updates with usage refresh, and midnight
+  rollover on resume.
 - `PauseSettingsTest` — order-preserving default and per-app sequences,
   legacy override decoding, reordering, schedule windows (including overnight),
-  snooze deadlines, and the empty-sequence fallback.
-- `SettingsRepositoryTest` — file-backed DataStore proof that the ordered
-  default key, app append/reorder behavior, per-app order, legacy unordered-set
-  fallback, schedule, snooze, and retention values persist correctly.
-- `InterceptionRepositoryTest` — Robolectric + in-memory Room coverage of the
-  local-day boundaries, attempt/walked-away counts, most-triggered app, the
-  record-then-complete flow, full-sequence history, archive import/export, and
-  retention deletion/clear.
+  snooze deadlines, profile presets and pure-Kotlin JSON codec, daily limits,
+  strict mode phrase matching, and the empty-sequence fallback.
+- `SettingsRepositoryTest` — file-backed DataStore proof of ordered friction
+  sequences, legacy fallback, schedule, snooze, retention, atomic profile
+  save/select/delete with active-profile syncing, daily limits, and strict mode
+  configuration.
+- `InterceptionRepositoryTest` — Robolectric + in-memory Room coverage of local
+  1-day, 7-day, and 30-day boundaries, attempt/walked-away counts, top-app
+  trends, timezone-accurate time-of-day buckets, record-then-complete flow,
+  full-sequence history, archive import/export, and retention deletion/clear.
+- `ForegroundUsageReaderTest` — pure foreground event aggregation covering
+  multi-session summing, still-open apps, midnight rollover, duplicate pause
+  guards, and target package filtering.
+- `DailyBudgetRepositoryTest` — per-day cache and Room v3 persistence, budget
+  exceeded vs remaining checks, midnight reset, and fallback when Usage Access
+  is unavailable.
 - `HistoryCsvTest` — quoted commas, quotes, embedded newlines, CRLF, malformed
   rows, and header validation for the local archive.
 - `HistoryRetentionManagerTest` — 30/90-day cutoffs and the forever policy.
-- `PauseDatabaseMigrationTest` — creates a real v1 SQLite database, runs the
-  1→2 migration, and verifies old history survives while the sequence column
-  becomes available.
-- Room exports the v2 schema to `app/schemas/`; it is committed as the baseline
-  for future migrations and drift checks.
+- `PauseDatabaseMigrationTest` — creates real v1 and v2 SQLite databases, runs
+  the 1→3 and 2→3 migrations, and verifies existing history survives while the
+  sequence column and `daily_usage` table become available.
+- Room exports v2 and v3 schemas to `app/schemas/`; they are committed as the
+  baseline for future migrations and drift checks.
 
 The Robolectric test downloads an Android runtime jar on its first run.
 
@@ -253,10 +301,19 @@ The Robolectric test downloads an Android runtime jar on its first run.
 
 Requires a booted API 26+ emulator (API 35 recommended) with the English locale.
 
-- `PauseScreenInstrumentedTest` launches the pause screen in breathing,
-  intention and time-limit modes. It verifies the Continue CTA is locked until
-  its condition is met, that walking away returns Home and records a
-  `WALKED_AWAY` row, and that an intention or time limit unlocks Continue.
+- `PauseScreenInstrumentedTest` launches the pause screen in single-mode
+  (breathing, intention, time-limit) and two-step (`INTENTION → TIME_LIMIT`)
+  sequences. It verifies the Continue/Next CTA stays locked until each step's
+  condition is met, walking away returns Home and records `WALKED_AWAY`, and
+  completing the sequence records the full ordered sequence, intention, and
+  limit in Room.
+- `MultiStepComposeInstrumentedTest` verifies `InterventionScreen` multi-step
+  headers/CTAs, the daily-limit-blocked view, and `FrictionSequenceEditor`
+  reordering and minimum-1 guard.
+- `HomeDialogsComposeInstrumentedTest` verifies `AppFrictionDialog`,
+  `DailyLimitDialog` (including Usage Access hint), and
+  `StrictModeChallengeDialog` (countdown delay and case-insensitive phrase
+  unlocking).
 - `InterventionErrorDialogInstrumentedTest` renders the session-start error
   dialog with Compose on-device and verifies its modal semantics, Retry and
   Keep app closed actions, and focus on the dialog actions.
@@ -274,10 +331,11 @@ when the Settings package is unavailable.
 [`.github/workflows/android.yml`](.github/workflows/android.yml) runs on every
 push and pull request:
 
-- JVM unit, migration, DataStore failure, CSV, and retention tests.
+- JVM unit, migration, DataStore failure, usage/budget, CSV, and retention tests.
 - Debug build and Android-test APK compilation.
-- Instrumented pause, accessibility, and error-dialog tests on API 26 and API 35
-  emulators, with reports uploaded when a run fails.
+- Instrumented pause, multi-step Compose, dialog, accessibility, and
+  error-dialog tests on API 26 and API 35 emulators, with reports uploaded when
+  a run fails.
 
 The emulator jobs need hardware acceleration. GitHub-hosted Ubuntu runners ship
 `/dev/kvm`, but the `kvm` group has no members, so the workflow first installs a
@@ -295,21 +353,21 @@ serves. The same APK is attached to a versioned release tag as a snapshot.
 ```
 app/src/main/java/com/pause/app/
 ├── data/
-│   ├── local/          Room entity, DAO, database, type converters
+│   ├── local/          Room v3 entities (intervention_logs, daily_usage), DAOs, migrations
 │   ├── export/         Local CSV history archive
-│   ├── preferences/    DataStore settings + repository
-│   └── repository/     Interception history, retention, installed apps
+│   ├── preferences/    DataStore settings, profiles, strict mode + repository
+│   └── repository/     Interception history/trends, daily budgets, retention, installed apps
 ├── di/                 Hilt modules and qualifiers
-├── domain/model/       FrictionMode, outcomes, UI models
-├── service/            Accessibility service, interception gate, cooldowns,
+├── domain/model/       FrictionMode, profiles, strict mode, stats ranges, daily budgets
+├── service/            Accessibility service, interception gate, usage reader, cooldowns,
 │                       session timers, session-end overlay
 ├── ui/
-│   ├── home/           Dashboard + ViewModel
-│   ├── apps/           App picker + ViewModel
+│   ├── home/           Dashboard (profiles, stats ranges & trends, daily limits) + ViewModel
+│   ├── apps/           App picker (with strict-mode unmonitor guard) + ViewModel
 │   ├── history/        Local pause history + filters
-│   ├── settings/       Permission onboarding, preferences
-│   ├── intervention/   Full-screen pause Activity, ViewModel and UI
-│   ├── components/     Shared Compose pieces
+│   ├── settings/       Permission setup (incl. optional Usage Access), profiles, strict mode
+│   ├── intervention/   Full-screen pause Activity, ViewModel and UI (incl. daily budget block)
+│   ├── components/     Shared Compose pieces (incl. StrictModeChallengeDialog)
 │   ├── navigation/     NavHost
 │   └── theme/          Material 3 theme, dynamic color, dark mode
 ├── util/               Permission checks, settings intents, time source
@@ -317,18 +375,18 @@ app/src/main/java/com/pause/app/
 └── PauseApplication.kt
 
 .github/workflows/      Unit + API 26/35 emulator CI
-app/schemas/            Exported Room schemas (v2 baseline)
+app/schemas/            Exported Room schemas (v2 and v3 baselines)
 
 app/src/test/java/com/pause/app/
-├── data/               Room, DataStore, CSV, retention and rules tests
-├── service/            Gate, cooldown and session-limit unit tests
-├── ui/                 Pause ViewModel persistence-order tests
+├── data/               Room migrations, range stats, daily budgets, DataStore, CSV, retention
+├── service/            Gate, foreground usage reader, cooldown and session-limit unit tests
+├── ui/                 Intervention and Home ViewModel unit tests
 └── util/               Fake monotonic clock
 
 app/src/androidTest/java/com/pause/app/
 ├── service/            Real accessibility interception test
 ├── testing/            Shell helpers, service controller, entry point access
-└── ui/                 Pause-screen UI tests
+└── ui/                 Pause-screen, multi-step Compose, and dialog UI tests
 
 app/src/debug/java/com/pause/app/testing/
 └── PauseTestEntryPoint.kt   Hilt access for instrumented tests (debug only)
@@ -339,6 +397,9 @@ app/src/debug/java/com/pause/app/testing/
 - `android.permission.INTERNET` is **not** declared. The app cannot make a
   network request, even accidentally.
 - No analytics, crash reporting, ads or remote config SDKs.
+- Optional Usage Access (`PACKAGE_USAGE_STATS`) is off by default and used only
+  locally to total daily foreground minutes for configured daily limits; it
+  never inspects screen content and never leaves the device.
 - Session reminders use local Android notifications and AlarmManager; they do
   not make a network request.
 - History export/import uses Android's Storage Access Framework and a local CSV
@@ -367,7 +428,11 @@ app/src/debug/java/com/pause/app/testing/
 - Notification delivery requires the notification permission on Android 13+.
   The overlay remains available when the process is alive and the device is
   unlocked.
+- Daily total limits rely on Android's `UsageStatsManager` when Usage Access is
+  granted; without Usage Access, daily limits cannot read OS foreground totals
+  and fall back to any cached local usage.
 - The app has no onboarding navigation flow beyond the settings screen; the
-  dashboard surfaces a **Finish setting up** card until all permissions are on.
+  dashboard surfaces a **Finish setting up** card until all four core
+  permissions are on.
 
 See [ROADMAP.md](ROADMAP.md) for the prioritized next steps.

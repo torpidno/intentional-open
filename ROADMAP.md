@@ -6,7 +6,7 @@ sync. Every item below must preserve that boundary and keep history local.
 Effort estimates: **S** = one focused change, **M** = a screen or persistence
 change, **L** = new tracking or platform work.
 
-## Shipped in this pass
+## Shipped
 
 - Ordered multi-friction defaults and per-app sequences, including up/down
   controls and order-preserving history/active sequences.
@@ -21,64 +21,35 @@ change, **L** = new tracking or platform work.
 - Per-app 15-minute / 1-hour snooze with automatic gate-level expiry.
 - 30/90/forever history retention, clear history, and local CSV export/import
   through the Storage Access Framework.
-- Room migration that preserves existing history while adding the sequence
-  column, covered by a real v1→v2 SQLite migration test; exported v2 schema and
-  CI on API 26/35.
+- **Multi-step ViewModel, Compose, and emulator tests:** JVM/Robolectric
+  coverage of `InterventionViewModel` (unlock rules, 3-step sequences,
+  final-only session start, mid-sequence walk-away, daily-limit blocking, and
+  process-death restoration) and `HomeViewModel` (range switching, profile
+  selection, daily limits, midnight rollover), Compose UI tests for
+  `InterventionScreen`, `FrictionSequenceEditor`, `AppFrictionDialog`,
+  `DailyLimitDialog`, and `StrictModeChallengeDialog`, plus a two-step
+  (`INTENTION → TIME_LIMIT`) emulator test in `PauseScreenInstrumentedTest`.
+- **Profiles:** Named local configuration bundles (monitored/paused apps,
+  default and per-app friction sequences, and weekday/time schedules) with Work,
+  Evening, Weekend, and custom presets, atomic DataStore profile switching on
+  Home and Settings, and optional schedule-based auto-switching.
+- **Daily total limits:** Optional per-app daily usage budgets backed by
+  Android's `UsageStatsManager` (with an optional Usage Access setup card; never
+  reads screen content or accesses the network), local Room v3 `daily_usage`
+  storage (`MIGRATION_2_3` + exported `3.json` schema), Home usage badges and
+  limit picker, and a midnight-resetting budget-blocked pause screen.
+- **Stats ranges and trends:** Local Room range queries powering **Today**,
+  **7 days**, and **30 days** dashboard views with walk-away rates, top
+  triggered apps, and timezone-accurate time-of-day insights.
+- **Optional strict mode:** Opt-in, always-recoverable challenge (countdown
+  delay or always-displayed typed phrase) guarding weakening changes across
+  Home, App Picker, and Settings while letting tightening actions apply
+  immediately.
+- Room migrations preserving existing history through v1→v2→v3, covered by real
+  SQLite migration tests (`1→3` and `2→3`), exported v2/v3 schemas, and CI on
+  API 26/35.
 
-## Top five next
-
-### 1. Multi-step ViewModel and Compose tests (M)
-
-**Why:** The new sequence is the highest-risk logic in the app, and the current
-instrumented tests cover single-mode pauses only.
-
-**How:** Use fake settings/history/session dependencies to test unlock rules,
-Next behavior, final-only session start, intention persistence, cancellation,
-and process-death restoration. Add Compose tests for the per-app dialog, the
-settings checkboxes, and the step header/CTA.
-
-**Done when:** The sequence paths are exercised on JVM/Robolectric and the
-instrumented suite covers at least one two-step pause on an emulator.
-
-### 2. Profiles (L)
-
-**Why:** Work, Evening, and Weekend need different app sets, sequences, and
-schedules. The current global schedule is a single window.
-
-**How:** Store named profile bundles locally and switch them manually or by a
-schedule. Keep one active profile at a time; no account or sync.
-
-**Done when:** Switching profiles updates the gate's settings atomically and a
-profile's schedule can activate it.
-
-### 3. Daily total limits (L)
-
-**Why:** A per-session limit does not cap a whole day of short visits.
-
-**How:** Track foreground time locally per app and enforce a daily budget
-before opening. Keep the data in Room and never sample screen content.
-
-**Done when:** A budget expiry blocks a new pause with a clear local message and
-resets at local midnight.
-
-### 4. Stats ranges and trends (S–M)
-
-**Why:** Today-only counts hide longer-term patterns.
-
-**How:** Add 7-day and 30-day aggregates, per-app trends, and time-of-day
-insights to the existing local Room queries.
-
-**Done when:** The dashboard can switch ranges without any network call.
-
-### 5. Optional strict mode (M)
-
-**Why:** A friction can be bypassed by disabling Pause or removing the app.
-
-**How:** Add an opt-in, recoverable delay or typed phrase before those changes.
-
-**Done when:** Strict mode is clearly recoverable and never traps a user.
-
-## Later product work
+## Next product work
 
 - **Manual pause and Quick Settings tile (S–M):** Start a breathing exercise on
   demand and offer a tile/shortcut for the master switch.
@@ -107,10 +78,11 @@ insights to the existing local Room queries.
   into a pure state machine with exhaustive tests.
 - **Full sequence logging (shipped):** History now reads a sequence column;
   extend analytics/aggregates if the dashboard needs mode-specific insights.
-- **Schema drift guard (shipped):** Room exports and commits v2; keep the
-  real-SQLite migration test current when adding version 3.
-- **CI and device matrix (shipped):** Unit, migration, Debug, Android-test APK,
-  and API 26/35 instrumented runs. Add API 36 when the toolchain supports it.
+- **Schema drift guard (shipped):** Room exports and commits v2 and v3 schemas;
+  keep the real-SQLite migration tests current when adding future versions.
+- **CI and device matrix (shipped):** Unit, migration, DataStore, Compose UI,
+  Debug, Android-test APK, and API 26/35 instrumented runs. Add API 36 when the
+  toolchain supports it.
 - **Platform updates (M–L):** target/compile SDK 36, AGP/Gradle/Kotlin updates,
   and a fresh Play target-SDK review.
 - **Session fallback hardening (M):** Add a foreground-service or

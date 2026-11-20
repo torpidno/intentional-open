@@ -7,6 +7,7 @@ import android.provider.Settings
 import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,8 +28,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,6 +44,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -58,7 +65,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -67,12 +78,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pause.app.BuildConfig
 import com.pause.app.R
 import com.pause.app.data.preferences.PauseSettings
+import com.pause.app.domain.model.PauseProfile
+import com.pause.app.domain.model.StrictModeChallenge
 import com.pause.app.ui.components.ChoiceChips
 import com.pause.app.ui.components.FrictionSequenceEditor
 import com.pause.app.ui.components.PauseCard
 import com.pause.app.ui.components.PrivacyFooter
 import com.pause.app.ui.components.SectionHeader
 import com.pause.app.ui.components.StatusPill
+import com.pause.app.ui.components.StrictModeChallengeDialog
+import com.pause.app.ui.components.pauseClickable
 import com.pause.app.ui.theme.PauseDimens
 import com.pause.app.util.PermissionSnapshot
 import com.pause.app.util.PermissionType
@@ -80,6 +95,21 @@ import java.time.DayOfWeek
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private const val MAX_CUSTOM_PROFILE_NAME_LENGTH = 40
+
+private val WEEKDAYS_SET = setOf(
+    DayOfWeek.MONDAY,
+    DayOfWeek.TUESDAY,
+    DayOfWeek.WEDNESDAY,
+    DayOfWeek.THURSDAY,
+    DayOfWeek.FRIDAY,
+)
+
+private val WEEKEND_SET = setOf(
+    DayOfWeek.SATURDAY,
+    DayOfWeek.SUNDAY,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,12 +119,18 @@ fun SettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var is24Hour by remember(context) { mutableStateOf(DateFormat.is24HourFormat(context)) }
+    var pendingStrictAction by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { viewModel.refreshPermissions() }
 
-    // Re-check permissions every time the user returns from a system screen.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermissions() }
+    // Re-check permissions and clock format every time the user returns from a system screen.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshPermissions()
+        is24Hour = DateFormat.is24HourFormat(context)
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.openSettings.collect { intent ->
@@ -111,6 +147,20 @@ fun SettingsScreen(
                 }
         }
     }
+
+    fun guardWeakeningAction(
+        isWeakening: Boolean,
+        actionDescription: String,
+        action: () -> Unit,
+    ) {
+        if (isWeakening && state.settings.strictModeEnabled) {
+            pendingStrictAction = actionDescription to action
+        } else {
+            action()
+        }
+    }
+
+    val activeProfileName = state.settings.activeProfile?.name
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -216,6 +266,15 @@ fun SettingsScreen(
                 }
 
                 item {
+                    OptionalPermissionCard(
+                        title = stringResource(R.string.permission_usage_access_title),
+                        body = stringResource(R.string.permission_usage_access_body),
+                        granted = state.permissions.usageAccessGranted,
+                        onOpen = { viewModel.openPermissionSettings(PermissionType.USAGE_ACCESS) },
+                    )
+                }
+
+                item {
                     SectionHeader(
                         title = stringResource(R.string.settings_preferences_title),
                         modifier = Modifier.padding(top = PauseDimens.space8),
@@ -231,7 +290,17 @@ fun SettingsScreen(
                             options = PauseSettings.COOLDOWN_OPTIONS,
                             selected = state.settings.cooldownMinutes,
                             label = { stringResource(R.string.settings_cooldown_option, it) },
-                            onSelect = viewModel::setCooldownMinutes,
+                            onSelect = { newCooldown ->
+                                guardWeakeningAction(
+                                    isWeakening = newCooldown > state.settings.cooldownMinutes,
+                                    actionDescription = context.getString(
+                                        R.string.strict_action_lengthen_cooldown,
+                                        newCooldown,
+                                    ),
+                                ) {
+                                    viewModel.setCooldownMinutes(newCooldown)
+                                }
+                            },
                         )
                     }
                 }
@@ -245,15 +314,49 @@ fun SettingsScreen(
                             options = PauseSettings.BREATHING_OPTIONS,
                             selected = state.settings.breathingDurationSeconds,
                             label = { stringResource(R.string.settings_breathing_option, it) },
-                            onSelect = viewModel::setBreathingDurationSeconds,
+                            onSelect = { newSeconds ->
+                                guardWeakeningAction(
+                                    isWeakening = newSeconds < state.settings.breathingDurationSeconds,
+                                    actionDescription = context.getString(
+                                        R.string.strict_action_shorten_breathing,
+                                        newSeconds,
+                                    ),
+                                ) {
+                                    viewModel.setBreathingDurationSeconds(newSeconds)
+                                }
+                            },
                         )
                     }
+                }
+
+                item {
+                    ProfilesCard(
+                        settings = state.settings,
+                        is24Hour = is24Hour,
+                        onSelectProfile = viewModel::selectProfile,
+                        onSaveProfile = viewModel::saveProfile,
+                        onDeleteProfile = { profile ->
+                            guardWeakeningAction(
+                                isWeakening = true,
+                                actionDescription = context.getString(
+                                    R.string.strict_action_delete_profile,
+                                    profile.name,
+                                ),
+                            ) {
+                                viewModel.deleteProfile(profile.id)
+                            }
+                        },
+                        onAutoSwitchChange = viewModel::setAutoSwitchProfiles,
+                    )
                 }
 
                 item {
                     PreferenceCard(
                         title = stringResource(R.string.settings_default_mode_title),
                         body = stringResource(R.string.settings_default_mode_body),
+                        supportingCaption = activeProfileName?.let {
+                            stringResource(R.string.settings_profiles_applies_to_active, it)
+                        },
                     ) {
                         FrictionSequenceEditor(
                             selectedModes = state.settings.defaultFrictionModes,
@@ -272,7 +375,18 @@ fun SettingsScreen(
                 item {
                     SchedulePreferenceCard(
                         settings = state.settings,
-                        onEnabledChange = viewModel::setScheduleEnabled,
+                        is24Hour = is24Hour,
+                        activeProfileName = activeProfileName,
+                        onEnabledChange = { enabled ->
+                            guardWeakeningAction(
+                                isWeakening = !enabled,
+                                actionDescription = context.getString(
+                                    R.string.strict_action_disable_schedule,
+                                ),
+                            ) {
+                                viewModel.setScheduleEnabled(enabled)
+                            }
+                        },
                         onStartChange = { start ->
                             viewModel.setScheduleWindow(
                                 startMinutes = start,
@@ -286,6 +400,35 @@ fun SettingsScreen(
                             )
                         },
                         onDayToggle = viewModel::toggleScheduleDay,
+                    )
+                }
+
+                item {
+                    StrictModeCard(
+                        settings = state.settings,
+                        onEnabledChange = { enabled ->
+                            guardWeakeningAction(
+                                isWeakening = !enabled,
+                                actionDescription = context.getString(
+                                    R.string.strict_action_disable_strict_mode,
+                                ),
+                            ) {
+                                viewModel.setStrictModeEnabled(enabled)
+                            }
+                        },
+                        onChallengeChange = viewModel::setStrictModeChallenge,
+                        onDelayChange = { newDelay ->
+                            guardWeakeningAction(
+                                isWeakening = newDelay < state.settings.strictModeDelaySeconds,
+                                actionDescription = context.getString(
+                                    R.string.strict_action_shorten_strict_delay,
+                                    newDelay,
+                                ),
+                            ) {
+                                viewModel.setStrictModeDelaySeconds(newDelay)
+                            }
+                        },
+                        onPhraseSave = viewModel::setStrictModePhrase,
                     )
                 }
 
@@ -325,6 +468,20 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    pendingStrictAction?.let { (description, confirmedAction) ->
+        StrictModeChallengeDialog(
+            actionDescription = description,
+            challenge = state.settings.strictModeChallenge,
+            delaySeconds = state.settings.strictModeDelaySeconds,
+            phrase = state.settings.effectiveStrictModePhrase,
+            onDismiss = { pendingStrictAction = null },
+            onConfirmed = {
+                pendingStrictAction = null
+                confirmedAction()
+            },
+        )
     }
 }
 
@@ -465,9 +622,105 @@ private fun PermissionCard(
 }
 
 @Composable
+private fun OptionalPermissionCard(
+    title: String,
+    body: String,
+    granted: Boolean,
+    onOpen: () -> Unit,
+) {
+    PauseCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                modifier = Modifier.size(40.dp),
+                shape = CircleShape,
+                color = if (granted) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHighest
+                },
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (granted) Icons.Filled.Check else Icons.Filled.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = if (granted) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
+            Spacer(Modifier.width(PauseDimens.space16))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(PauseDimens.space8))
+            if (granted) {
+                StatusPill(granted = true)
+            } else {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                ) {
+                    Text(
+                        text = stringResource(R.string.permission_optional_badge),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(
+                            horizontal = PauseDimens.space16,
+                            vertical = PauseDimens.space8,
+                        ),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(PauseDimens.space16))
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(PauseDimens.space16))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            if (granted) {
+                TextButton(
+                    onClick = onOpen,
+                    modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+                ) {
+                    Text(
+                        text = stringResource(R.string.permission_open),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onOpen,
+                    modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+                    shape = MaterialTheme.shapes.medium,
+                    contentPadding = PaddingValues(
+                        horizontal = PauseDimens.space24,
+                        vertical = PauseDimens.space8,
+                    ),
+                ) {
+                    Text(stringResource(R.string.permission_grant))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PreferenceCard(
     title: String,
     body: String,
+    supportingCaption: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     PauseCard {
@@ -478,8 +731,582 @@ private fun PreferenceCard(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (!supportingCaption.isNullOrBlank()) {
+            Spacer(Modifier.height(PauseDimens.space8))
+            Text(
+                text = supportingCaption,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         Spacer(Modifier.height(PauseDimens.space16))
         content()
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ProfilesCard(
+    settings: PauseSettings,
+    is24Hour: Boolean,
+    onSelectProfile: (String?) -> Unit,
+    onSaveProfile: (PauseProfile, Boolean) -> Unit,
+    onDeleteProfile: (PauseProfile) -> Unit,
+    onAutoSwitchChange: (Boolean) -> Unit,
+) {
+    var showCustomDialog by remember { mutableStateOf(false) }
+    val workLabel = stringResource(R.string.settings_profiles_preset_work)
+    val eveningLabel = stringResource(R.string.settings_profiles_preset_evening)
+    val weekendLabel = stringResource(R.string.settings_profiles_preset_weekend)
+
+    PreferenceCard(
+        title = stringResource(R.string.settings_profiles_title),
+        body = stringResource(R.string.settings_profiles_body),
+    ) {
+        val activeProfile = settings.activeProfile
+        if (activeProfile != null) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Row(
+                    modifier = Modifier.padding(
+                        start = PauseDimens.space16,
+                        end = PauseDimens.space8,
+                        top = PauseDimens.space8,
+                        bottom = PauseDimens.space8,
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.settings_profiles_active_banner,
+                            activeProfile.name,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = { onSelectProfile(null) },
+                        modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_profiles_unlink),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(PauseDimens.space16))
+        }
+
+        if (settings.profiles.isEmpty()) {
+            Text(
+                text = stringResource(R.string.settings_profiles_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(PauseDimens.space8)) {
+                settings.profiles.forEach { profile ->
+                    key(profile.id) {
+                        ProfileRow(
+                            profile = profile,
+                            selected = profile.id == settings.activeProfileId,
+                            is24Hour = is24Hour,
+                            onSelect = {
+                                if (profile.id != settings.activeProfileId) {
+                                    onSelectProfile(profile.id)
+                                }
+                            },
+                            onDelete = { onDeleteProfile(profile) },
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(PauseDimens.space16))
+        Text(
+            text = stringResource(R.string.settings_profiles_quick_add),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(PauseDimens.space8))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+            verticalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+        ) {
+            OutlinedButton(
+                onClick = {
+                    val (id, name) = nextUniquePreset("work", workLabel, settings.profiles)
+                    onSaveProfile(
+                        PauseProfile.workPreset(
+                            id = id,
+                            monitoredPackages = settings.monitoredPackages,
+                            name = name,
+                        ),
+                        true,
+                    )
+                },
+                modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+            ) {
+                Text(workLabel)
+            }
+            OutlinedButton(
+                onClick = {
+                    val (id, name) = nextUniquePreset("evening", eveningLabel, settings.profiles)
+                    onSaveProfile(
+                        PauseProfile.eveningPreset(
+                            id = id,
+                            monitoredPackages = settings.monitoredPackages,
+                            name = name,
+                        ),
+                        true,
+                    )
+                },
+                modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+            ) {
+                Text(eveningLabel)
+            }
+            OutlinedButton(
+                onClick = {
+                    val (id, name) = nextUniquePreset("weekend", weekendLabel, settings.profiles)
+                    onSaveProfile(
+                        PauseProfile.weekendPreset(
+                            id = id,
+                            monitoredPackages = settings.monitoredPackages,
+                            name = name,
+                        ),
+                        true,
+                    )
+                },
+                modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+            ) {
+                Text(weekendLabel)
+            }
+            OutlinedButton(
+                onClick = { showCustomDialog = true },
+                modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+            ) {
+                Text(stringResource(R.string.settings_profiles_preset_custom))
+            }
+        }
+
+        if (settings.profiles.isNotEmpty()) {
+            Spacer(Modifier.height(PauseDimens.space16))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.settings_profiles_auto_switch_title),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Spacer(Modifier.height(PauseDimens.space4))
+                    Text(
+                        text = stringResource(R.string.settings_profiles_auto_switch_body),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(PauseDimens.space16))
+                Switch(
+                    checked = settings.autoSwitchProfiles,
+                    onCheckedChange = onAutoSwitchChange,
+                )
+            }
+        }
+    }
+
+    if (showCustomDialog) {
+        CreateCustomProfileDialog(
+            onDismiss = { showCustomDialog = false },
+            onCreate = { trimmedName ->
+                val profile = PauseProfile(
+                    id = uniqueCustomProfileId(trimmedName, settings.profiles),
+                    name = trimmedName,
+                    monitoredPackages = settings.monitoredPackages,
+                    pausedPackages = settings.pausedPackages,
+                    defaultFrictionModes = settings.defaultFrictionModes,
+                    appModeOverrides = settings.appModeOverrides,
+                    scheduleEnabled = settings.scheduleEnabled,
+                    scheduleDays = settings.scheduleDays,
+                    scheduleStartMinutes = settings.scheduleStartMinutes,
+                    scheduleEndMinutes = settings.scheduleEndMinutes,
+                )
+                onSaveProfile(profile, true)
+                showCustomDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun ProfileRow(
+    profile: PauseProfile,
+    selected: Boolean,
+    is24Hour: Boolean,
+    onSelect: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val shape = MaterialTheme.shapes.medium
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val border = if (selected) {
+        BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+    } else {
+        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    }
+    val titleColor = if (selected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val subtitleColor = if (selected) {
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val scheduleSummary = profileScheduleSummary(profile = profile, is24Hour = is24Hour)
+    val appCountText = pluralStringResource(
+        R.plurals.settings_profiles_app_count,
+        profile.monitoredPackages.size,
+        profile.monitoredPackages.size,
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = shape,
+        color = containerColor,
+        border = border,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pauseClickable(shape = shape, onClick = onSelect)
+                .padding(
+                    start = PauseDimens.space16,
+                    end = PauseDimens.space8,
+                    top = PauseDimens.space8,
+                    bottom = PauseDimens.space8,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+                ) {
+                    Text(
+                        text = profile.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = titleColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (selected) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.settings_profiles_active_badge),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(
+                                    horizontal = PauseDimens.space8,
+                                    vertical = 2.dp,
+                                ),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(PauseDimens.space4))
+                Text(
+                    text = stringResource(
+                        R.string.settings_profiles_row_meta,
+                        scheduleSummary,
+                        appCountText,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = subtitleColor,
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = stringResource(R.string.cd_delete_profile, profile.name),
+                    tint = subtitleColor,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreateCustomProfileDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    val trimmed = name.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_profiles_custom_dialog_title)) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.settings_profiles_custom_dialog_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(PauseDimens.space16))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { input ->
+                        name = input.take(MAX_CUSTOM_PROFILE_NAME_LENGTH)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.settings_profiles_custom_name_label)) },
+                    placeholder = {
+                        Text(stringResource(R.string.settings_profiles_custom_name_placeholder))
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            if (trimmed.isNotEmpty()) onCreate(trimmed)
+                        },
+                    ),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onCreate(trimmed) },
+                enabled = trimmed.isNotEmpty(),
+                modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+            ) {
+                Text(stringResource(R.string.settings_profiles_custom_create))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+            ) {
+                Text(stringResource(R.string.settings_schedule_cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun profileScheduleSummary(
+    profile: PauseProfile,
+    is24Hour: Boolean,
+): String {
+    if (!profile.scheduleEnabled || profile.scheduleDays.isEmpty()) {
+        return stringResource(R.string.settings_profiles_manual_only)
+    }
+    val daysSummary = when {
+        profile.scheduleDays.size == DayOfWeek.entries.size ->
+            stringResource(R.string.settings_profiles_days_every_day)
+        profile.scheduleDays == WEEKDAYS_SET ->
+            stringResource(R.string.settings_profiles_days_weekdays)
+        profile.scheduleDays == WEEKEND_SET ->
+            stringResource(R.string.settings_profiles_days_weekend)
+        else -> DayOfWeek.entries
+            .filter { it in profile.scheduleDays }
+            .map { stringResource(it.labelRes()) }
+            .joinToString(", ")
+    }
+    val windowSummary = if (profile.scheduleStartMinutes == profile.scheduleEndMinutes) {
+        stringResource(R.string.settings_profiles_all_day)
+    } else {
+        stringResource(
+            R.string.settings_profiles_time_range,
+            formatScheduleMinutes(profile.scheduleStartMinutes, is24Hour),
+            formatScheduleMinutes(profile.scheduleEndMinutes, is24Hour),
+        )
+    }
+    return stringResource(R.string.settings_profiles_schedule_summary, daysSummary, windowSummary)
+}
+
+private fun nextUniquePreset(
+    baseId: String,
+    baseName: String,
+    existing: List<PauseProfile>,
+): Pair<String, String> {
+    val existingIds = existing.map { it.id }.toSet()
+    val existingNames = existing.map { it.name.lowercase(Locale.ROOT) }.toSet()
+    if (baseId !in existingIds && baseName.lowercase(Locale.ROOT) !in existingNames) {
+        return baseId to baseName
+    }
+    var suffix = 2
+    while (
+        "$baseId-$suffix" in existingIds ||
+        "$baseName $suffix".lowercase(Locale.ROOT) in existingNames
+    ) {
+        suffix++
+    }
+    return "$baseId-$suffix" to "$baseName $suffix"
+}
+
+private fun uniqueCustomProfileId(
+    name: String,
+    existing: List<PauseProfile>,
+): String {
+    val existingIds = existing.map { it.id }.toSet()
+    val slug = name.lowercase(Locale.ROOT)
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+        .ifEmpty { "custom" }
+    if (slug !in existingIds) return slug
+    var suffix = 2
+    while ("$slug-$suffix" in existingIds) {
+        suffix++
+    }
+    return "$slug-$suffix"
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StrictModeCard(
+    settings: PauseSettings,
+    onEnabledChange: (Boolean) -> Unit,
+    onChallengeChange: (StrictModeChallenge) -> Unit,
+    onDelayChange: (Int) -> Unit,
+    onPhraseSave: (String) -> Unit,
+) {
+    var phraseDraft by remember(settings.strictModePhrase) {
+        mutableStateOf(settings.effectiveStrictModePhrase)
+    }
+    val trimmedDraft = phraseDraft.trim()
+    val canSavePhrase = trimmedDraft.isNotEmpty() &&
+        trimmedDraft != settings.strictModePhrase.trim()
+    val canResetPhrase = settings.effectiveStrictModePhrase != PauseSettings.DEFAULT_STRICT_MODE_PHRASE ||
+        trimmedDraft != PauseSettings.DEFAULT_STRICT_MODE_PHRASE
+
+    PreferenceCard(
+        title = stringResource(R.string.settings_strict_mode_title),
+        body = stringResource(R.string.settings_strict_mode_body),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.settings_strict_mode_enabled),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(PauseDimens.space16))
+            Switch(
+                checked = settings.strictModeEnabled,
+                onCheckedChange = onEnabledChange,
+            )
+        }
+
+        if (settings.strictModeEnabled) {
+            Spacer(Modifier.height(PauseDimens.space16))
+            Text(
+                text = stringResource(R.string.settings_strict_mode_challenge_label),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(PauseDimens.space8))
+            ChoiceChips(
+                options = StrictModeChallenge.entries,
+                selected = settings.strictModeChallenge,
+                label = { challenge ->
+                    when (challenge) {
+                        StrictModeChallenge.DELAY ->
+                            stringResource(R.string.settings_strict_mode_challenge_delay)
+                        StrictModeChallenge.PHRASE ->
+                            stringResource(R.string.settings_strict_mode_challenge_phrase)
+                    }
+                },
+                onSelect = onChallengeChange,
+            )
+
+            Spacer(Modifier.height(PauseDimens.space16))
+            when (settings.strictModeChallenge) {
+                StrictModeChallenge.DELAY -> {
+                    Text(
+                        text = stringResource(R.string.settings_strict_mode_delay_label),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(PauseDimens.space8))
+                    ChoiceChips(
+                        options = PauseSettings.STRICT_MODE_DELAY_OPTIONS,
+                        selected = settings.strictModeDelaySeconds,
+                        label = { seconds ->
+                            stringResource(R.string.settings_strict_mode_delay_option, seconds)
+                        },
+                        onSelect = onDelayChange,
+                    )
+                }
+
+                StrictModeChallenge.PHRASE -> {
+                    OutlinedTextField(
+                        value = phraseDraft,
+                        onValueChange = { input ->
+                            phraseDraft = input.take(PauseSettings.MAX_STRICT_MODE_PHRASE_LENGTH)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = {
+                            Text(stringResource(R.string.settings_strict_mode_phrase_label))
+                        },
+                        supportingText = {
+                            Text(stringResource(R.string.settings_strict_mode_phrase_caption))
+                        },
+                        maxLines = 2,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (canSavePhrase) onPhraseSave(trimmedDraft)
+                            },
+                        ),
+                    )
+                    Spacer(Modifier.height(PauseDimens.space8))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(
+                            PauseDimens.space8,
+                            Alignment.End,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+                    ) {
+                        TextButton(
+                            onClick = {
+                                phraseDraft = PauseSettings.DEFAULT_STRICT_MODE_PHRASE
+                                onPhraseSave(PauseSettings.DEFAULT_STRICT_MODE_PHRASE)
+                            },
+                            enabled = canResetPhrase,
+                            modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+                        ) {
+                            Text(stringResource(R.string.settings_strict_mode_phrase_reset))
+                        }
+                        Button(
+                            onClick = { onPhraseSave(trimmedDraft) },
+                            enabled = canSavePhrase,
+                            modifier = Modifier.heightIn(min = PauseDimens.touchTarget),
+                            shape = MaterialTheme.shapes.medium,
+                        ) {
+                            Text(stringResource(R.string.settings_strict_mode_phrase_save))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -489,21 +1316,21 @@ private enum class ScheduleTimeField { START, END }
 @Composable
 private fun SchedulePreferenceCard(
     settings: PauseSettings,
+    is24Hour: Boolean,
+    activeProfileName: String?,
     onEnabledChange: (Boolean) -> Unit,
     onStartChange: (Int) -> Unit,
     onEndChange: (Int) -> Unit,
     onDayToggle: (DayOfWeek) -> Unit,
 ) {
-    val context = LocalContext.current
-    var is24Hour by remember(context) { mutableStateOf(DateFormat.is24HourFormat(context)) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        is24Hour = DateFormat.is24HourFormat(context)
-    }
     var editing by remember { mutableStateOf<ScheduleTimeField?>(null) }
 
     PreferenceCard(
         title = stringResource(R.string.settings_schedule_title),
         body = stringResource(R.string.settings_schedule_body),
+        supportingCaption = activeProfileName?.let {
+            stringResource(R.string.settings_profiles_applies_to_active, it)
+        },
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
