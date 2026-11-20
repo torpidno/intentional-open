@@ -103,15 +103,29 @@ class InterceptionRepository @Inject constructor(
         dao.completeAllPending(InterventionOutcome.WALKED_AWAY)
     }
 
+    /** Closes pause rows recorded before [beforeMillis] that were left pending by an interrupted process. */
+    suspend fun completeStalePendingAttempts(beforeMillis: Long) {
+        dao.completeAllPendingBefore(InterventionOutcome.WALKED_AWAY, beforeMillis)
+    }
+
     /** Every record, oldest first, for a local archive. */
     suspend fun exportHistory(): List<HistoryArchiveEntry> =
         dao.getAll().map { it.toArchiveEntry() }
 
-    /** Inserts archive rows with new local IDs; returns how many were added. */
+    /**
+     * Inserts archive rows with new local IDs, skipping entries that match an
+     * existing row or repeat within the import batch. Returns how many new rows
+     * were added.
+     */
     suspend fun importHistory(entries: List<HistoryArchiveEntry>): Int {
         if (entries.isEmpty()) return 0
-        dao.insertAll(entries.map { it.toEntity() })
-        return entries.size
+        val seen = dao.getAll().mapTo(HashSet()) { it.toArchiveEntry().dedupKey() }
+        val fresh = entries.mapNotNull { entry ->
+            if (seen.add(entry.dedupKey())) entry.toEntity() else null
+        }
+        if (fresh.isEmpty()) return 0
+        dao.insertAll(fresh)
+        return fresh.size
     }
 
     suspend fun deleteHistoryBefore(cutoffMillis: Long) {
@@ -168,6 +182,15 @@ class InterceptionRepository @Inject constructor(
         )
     }
 
+    private fun HistoryArchiveEntry.dedupKey(): HistoryDedupKey = HistoryDedupKey(
+        timestampMillis = timestampMillis,
+        packageName = packageName,
+        outcome = outcome,
+        frictionModes = frictionModes.distinct().ifEmpty { listOf(FrictionMode.BREATHING) },
+        intention = intention,
+        sessionLimitMinutes = sessionLimitMinutes,
+    )
+
     private fun todayRange(): Pair<Long, Long> {
         val zone = clock.zone
         val today = LocalDate.now(clock)
@@ -176,3 +199,12 @@ class InterceptionRepository @Inject constructor(
         return start to end
     }
 }
+
+private data class HistoryDedupKey(
+    val timestampMillis: Long,
+    val packageName: String,
+    val outcome: InterventionOutcome,
+    val frictionModes: List<FrictionMode>,
+    val intention: String?,
+    val sessionLimitMinutes: Int?,
+)

@@ -80,17 +80,14 @@ class InterventionViewModel @Inject constructor(
     private val clock: Clock,
 ) : ViewModel() {
 
-    private val packageName: String =
+    private var packageName: String =
         savedStateHandle.get<String>(PauseInterventionActivity.EXTRA_PACKAGE_NAME).orEmpty()
 
     /**
      * Ordered modes for this pause. The activity passes the list; the single
      * legacy extra keeps old callers and instrumentation tests working.
      */
-    private val modes: List<FrictionMode> = readModes(savedStateHandle)
-
-    /** Used for the attempt log, which still has one representative mode. */
-    private val primaryMode: FrictionMode = modes.first()
+    private var modes: List<FrictionMode> = readModes(savedStateHandle)
 
     /**
      * Restore the exact step, not just the first mode. Matching by mode name
@@ -107,38 +104,61 @@ class InterventionViewModel @Inject constructor(
     private val restoredLimit: Int? = savedStateHandle.get<Int>(KEY_SELECTED_LIMIT)
         ?.takeIf { it in PauseSettings.SESSION_LIMIT_OPTIONS }
 
-    private val appLabel: String = if (packageName.isBlank()) {
+    private val initialAppLabel: String = if (packageName.isBlank()) {
         ""
     } else {
         installedAppsRepository.labelFor(packageName)
     }
 
-    private val settings: PauseSettings = settingsRepository.settings.value
-    private val breathingSeconds: Int = settings.breathingDurationSeconds
-
-    private val pauseEndsAtMillis: Long = savedStateHandle.get<Long>(KEY_PAUSE_ENDS_AT)
-        ?: (clock.millis() + breathingSeconds * 1_000L).also {
-            savedStateHandle[KEY_PAUSE_ENDS_AT] = it
-        }
+    private var settings: PauseSettings = settingsRepository.settings.value
+    private var breathingSeconds: Int = settings.breathingDurationSeconds
 
     /**
-     * Inserting the PENDING log row happens once per ViewModel. Rotation reuses
+     * End timestamp for the active BREATHING step. Initialized only when
+     * entering a BREATHING step (or restored from SavedStateHandle after
+     * process death) so non-first breathing steps get their full countdown.
+     */
+    private var pauseEndsAtMillis: Long? = if (restoredMode == FrictionMode.BREATHING) {
+        savedStateHandle.get<Long>(KEY_PAUSE_ENDS_AT)
+            ?: (clock.millis() + breathingSeconds * 1_000L).also {
+                savedStateHandle[KEY_PAUSE_ENDS_AT] = it
+            }
+    } else {
+        null
+    }
+
+    /** Monotonic counter so async work from a superseded intervention is ignored. */
+    private var interventionGeneration: Long = 0L
+
+    /**
+     * Inserting the PENDING log row happens once per intervention. Rotation reuses
      * the ViewModel; process death restores the id from SavedStateHandle.
      */
-    private val attemptId: Deferred<Long> =
+    private var attemptId: Deferred<Long> =
         if (packageName.isBlank()) {
             CompletableDeferred(0L)
         } else {
-            viewModelScope.async {
-                savedStateHandle.get<Long>(KEY_ATTEMPT_ID) ?: interceptionRepository
-                    .recordAttempt(packageName, appLabel, modes)
-                    .also { savedStateHandle[KEY_ATTEMPT_ID] = it }
-            }
+            savedStateHandle.get<Long>(KEY_ATTEMPT_ID)?.let(::CompletableDeferred)
+                ?: run {
+                    val targetPackage = packageName
+                    val targetLabel = initialAppLabel
+                    val targetModes = modes
+                    val generation = interventionGeneration
+                    viewModelScope.async {
+                        interceptionRepository
+                            .recordAttempt(targetPackage, targetLabel, targetModes)
+                            .also { id ->
+                                if (interventionGeneration == generation) {
+                                    savedStateHandle[KEY_ATTEMPT_ID] = id
+                                }
+                            }
+                    }
+                }
         }
 
     private val initialRemainingMillis: Long =
         if (restoredMode == FrictionMode.BREATHING) {
-            (pauseEndsAtMillis - clock.millis()).coerceAtLeast(0L)
+            ((pauseEndsAtMillis ?: clock.millis()) - clock.millis()).coerceAtLeast(0L)
         } else {
             0L
         }
@@ -152,14 +172,15 @@ class InterventionViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(
         InterventionUiState(
             packageName = packageName,
-            appLabel = appLabel,
+            appLabel = initialAppLabel,
             mode = restoredMode,
             modeCount = modes.size,
             stepIndex = restoredStepIndex,
             breathingSeconds = breathingSeconds,
             remainingMillis = initialRemainingMillis,
             breathProgress = if (restoredMode == FrictionMode.BREATHING) {
-                (1f - initialRemainingMillis.toFloat() / (breathingSeconds * 1_000f))
+                val totalMillis = (breathingSeconds * 1_000L).coerceAtLeast(1L)
+                ((totalMillis - initialRemainingMillis).toFloat() / totalMillis)
                     .coerceIn(0f, 1f)
             } else {
                 0f
@@ -176,25 +197,38 @@ class InterventionViewModel @Inject constructor(
     val effects = _effects.receiveAsFlow()
 
     private var breathingJob: Job? = null
+    private var iconJob: Job? = null
 
     init {
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(appIcon = installedAppsRepository.loadIconFor(packageName))
-            }
+        if (packageName.isNotBlank()) {
+            loadAppIcon(packageName)
         }
         if (restoredMode == FrictionMode.BREATHING) {
             startBreathingTimer()
         }
     }
 
+    private fun loadAppIcon(targetPackage: String) {
+        iconJob?.cancel()
+        iconJob = viewModelScope.launch {
+            val icon = installedAppsRepository.loadIconFor(targetPackage)
+            _uiState.update { state ->
+                if (state.packageName == targetPackage) state.copy(appIcon = icon) else state
+            }
+        }
+    }
+
     private fun startBreathingTimer() {
+        breathingJob?.cancel()
+        val endsAt = pauseEndsAtMillis ?: return
         val totalMillis = (breathingSeconds * 1_000L).coerceAtLeast(1L)
+        val generation = interventionGeneration
         breathingJob = viewModelScope.launch {
             while (isActive) {
-                val remaining = (pauseEndsAtMillis - clock.millis()).coerceAtLeast(0L)
+                val remaining = (endsAt - clock.millis()).coerceAtLeast(0L)
                 val progress = ((totalMillis - remaining).toFloat() / totalMillis)
                     .coerceIn(0f, 1f)
+                if (interventionGeneration != generation) break
                 _uiState.update {
                     it.copy(
                         remainingMillis = remaining,
@@ -205,6 +239,107 @@ class InterventionViewModel @Inject constructor(
                 if (remaining == 0L) break
                 delay(TICK_MILLIS)
             }
+        }
+    }
+
+    /**
+     * Switches the singleTop pause surface to a newly intercepted app without
+     * recreating the Activity. Closes any unfinished prior attempt as walked away.
+     */
+    fun handleNewIntervention(
+        newPackageName: String,
+        newModes: List<FrictionMode>,
+    ) {
+        if (newPackageName.isBlank()) return
+        val previousState = _uiState.value
+        if (newPackageName == packageName && !previousState.isCompleting) return
+
+        val previousPackage = packageName
+        val previousAttemptId = attemptId
+        val previousIntention = previousState.intentionText()
+
+        breathingJob?.cancel()
+        breathingJob = null
+        iconJob?.cancel()
+        iconJob = null
+
+        if (!previousState.isCompleting && previousPackage.isNotBlank()) {
+            cooldownTracker.clear(previousPackage)
+            viewModelScope.launch {
+                runCatching {
+                    interceptionRepository.completeAttempt(
+                        id = previousAttemptId.await(),
+                        outcome = InterventionOutcome.WALKED_AWAY,
+                        intention = previousIntention,
+                        sessionLimitMinutes = null,
+                    )
+                }
+            }
+        }
+
+        val normalizedModes = newModes.distinct().ifEmpty { listOf(FrictionMode.BREATHING) }
+        val firstMode = normalizedModes.first()
+        val generation = ++interventionGeneration
+
+        packageName = newPackageName
+        modes = normalizedModes
+        settings = settingsRepository.settings.value
+        breathingSeconds = settings.breathingDurationSeconds
+
+        savedStateHandle[PauseInterventionActivity.EXTRA_PACKAGE_NAME] = newPackageName
+        savedStateHandle[PauseInterventionActivity.EXTRA_FRICTION_MODES] =
+            ArrayList(normalizedModes.map { it.name })
+        savedStateHandle[PauseInterventionActivity.EXTRA_FRICTION_MODE] = firstMode.name
+        savedStateHandle.remove<Long>(KEY_ATTEMPT_ID)
+        savedStateHandle.remove<Long>(KEY_PAUSE_ENDS_AT)
+        savedStateHandle.remove<Int>(KEY_STEP_INDEX)
+        savedStateHandle.remove<String>(KEY_MODE)
+        savedStateHandle.remove<String>(KEY_SELECTED_REASON)
+        savedStateHandle.remove<String>(KEY_NOTE)
+        savedStateHandle.remove<Int>(KEY_SELECTED_LIMIT)
+
+        val newLabel = installedAppsRepository.labelFor(newPackageName)
+        val durationMillis = (breathingSeconds * 1_000L).coerceAtLeast(0L)
+        if (firstMode == FrictionMode.BREATHING) {
+            val endsAt = clock.millis() + durationMillis
+            pauseEndsAtMillis = endsAt
+            savedStateHandle[KEY_PAUSE_ENDS_AT] = endsAt
+        } else {
+            pauseEndsAtMillis = null
+        }
+
+        attemptId = viewModelScope.async {
+            interceptionRepository
+                .recordAttempt(newPackageName, newLabel, normalizedModes)
+                .also { id ->
+                    if (interventionGeneration == generation) {
+                        savedStateHandle[KEY_ATTEMPT_ID] = id
+                    }
+                }
+        }
+
+        val remainingMillis = if (firstMode == FrictionMode.BREATHING) durationMillis else 0L
+        _uiState.value = InterventionUiState(
+            packageName = newPackageName,
+            appLabel = newLabel,
+            appIcon = null,
+            mode = firstMode,
+            modeCount = normalizedModes.size,
+            stepIndex = 0,
+            breathingSeconds = breathingSeconds,
+            remainingMillis = remainingMillis,
+            breathProgress = 0f,
+            isUnlocked = false,
+            selectedReason = null,
+            note = "",
+            selectedLimitMinutes = null,
+            isCompleting = false,
+            sessionStartError = false,
+        )
+
+        loadAppIcon(newPackageName)
+        if (firstMode == FrictionMode.BREATHING) {
+            startBreathingTimer()
         }
     }
 
@@ -247,18 +382,24 @@ class InterventionViewModel @Inject constructor(
             return
         }
 
+        val targetPackage = packageName
+        val currentAttemptId = attemptId
+        val currentSettings = settings
+        val intention = state.intentionText()
+        val limitMinutes = state.selectedLimitMinutes
+        val generation = interventionGeneration
         _uiState.update { it.copy(isCompleting = true, sessionStartError = false) }
 
         viewModelScope.launch {
-            val intention = state.intentionText()
-            val limitMinutes = state.selectedLimitMinutes
             val attemptRowId = try {
-                attemptId.await()
+                currentAttemptId.await()
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Throwable) {
-                _uiState.update {
-                    it.copy(isCompleting = false, sessionStartError = true)
+                if (interventionGeneration == generation) {
+                    _uiState.update {
+                        it.copy(isCompleting = false, sessionStartError = true)
+                    }
                 }
                 return@launch
             }
@@ -270,7 +411,7 @@ class InterventionViewModel @Inject constructor(
                 // with the deadline so startup can repair a half-finished start.
                 val sessionResult = try {
                     sessionStarter.startSession(
-                        packageName = packageName,
+                        packageName = targetPackage,
                         appLabel = state.appLabel,
                         limitMinutes = limitMinutes,
                         attemptId = attemptRowId,
@@ -282,8 +423,10 @@ class InterventionViewModel @Inject constructor(
                     Result.failure(failure)
                 }
                 if (sessionResult.isFailure) {
-                    _uiState.update {
-                        it.copy(isCompleting = false, sessionStartError = true)
+                    if (interventionGeneration == generation) {
+                        _uiState.update {
+                            it.copy(isCompleting = false, sessionStartError = true)
+                        }
                     }
                     return@launch
                 }
@@ -291,8 +434,8 @@ class InterventionViewModel @Inject constructor(
 
             runCatching {
                 val cooldownMillis = limitMinutes?.let { it * 60_000L }
-                    ?: (settings.cooldownMinutes * 60_000L)
-                cooldownTracker.setCooldown(packageName, cooldownMillis)
+                    ?: (currentSettings.cooldownMinutes * 60_000L)
+                cooldownTracker.setCooldown(targetPackage, cooldownMillis)
                 interceptionRepository.completeAttempt(
                     id = attemptRowId,
                     outcome = InterventionOutcome.PROCEEDED,
@@ -300,7 +443,8 @@ class InterventionViewModel @Inject constructor(
                     sessionLimitMinutes = limitMinutes,
                 )
             }
-            val launchIntent = installedAppsRepository.launchIntentFor(packageName)
+            if (interventionGeneration != generation) return@launch
+            val launchIntent = installedAppsRepository.launchIntentFor(targetPackage)
             _effects.send(
                 if (launchIntent != null) {
                     InterventionEffect.OpenTargetApp(launchIntent)
@@ -319,13 +463,35 @@ class InterventionViewModel @Inject constructor(
     }
 
     /**
-     * Moves to the next enabled mode. Modes are sorted by enum order, so
-     * breathing (the only timed step) is always first; later steps unlock from
-     * the user's existing intention/limit selection.
+     * Moves to the next mode in the user's ordered friction sequence. Entering
+     * a BREATHING step initializes and persists a fresh countdown deadline;
+     * intention and time-limit steps unlock from the user's selections.
      */
     private fun advanceToNextStep(state: InterventionUiState) {
         val nextIndex = state.stepIndex + 1
         val nextMode = modes.getOrNull(nextIndex) ?: return
+        breathingJob?.cancel()
+        breathingJob = null
+
+        if (nextMode == FrictionMode.BREATHING) {
+            val durationMillis = (breathingSeconds * 1_000L).coerceAtLeast(0L)
+            val endsAt = clock.millis() + durationMillis
+            pauseEndsAtMillis = endsAt
+            savedStateHandle[KEY_PAUSE_ENDS_AT] = endsAt
+            _uiState.update {
+                it.copy(
+                    mode = nextMode,
+                    stepIndex = nextIndex,
+                    remainingMillis = durationMillis,
+                    breathProgress = 0f,
+                    isUnlocked = false,
+                )
+            }
+            persistPauseProgress()
+            startBreathingTimer()
+            return
+        }
+
         val nextUnlocked = when (nextMode) {
             FrictionMode.BREATHING -> false
             FrictionMode.INTENTION -> state.selectedReason != null || state.note.isNotBlank()
@@ -356,22 +522,30 @@ class InterventionViewModel @Inject constructor(
     fun walkAway() {
         val state = _uiState.value
         if (state.isCompleting) return
+        val targetPackage = packageName
+        val currentAttemptId = attemptId
+        val intention = state.intentionText()
+        val generation = interventionGeneration
+        breathingJob?.cancel()
+        breathingJob = null
         _uiState.update { it.copy(isCompleting = true) }
 
         viewModelScope.launch {
             runCatching {
-                sessionStarter.cancelSession(packageName)
+                sessionStarter.cancelSession(targetPackage)
                 // Leaving the pause should not grant a free pass for the few
                 // seconds of the launch guard; the next launch is intercepted.
-                cooldownTracker.clear(packageName)
+                cooldownTracker.clear(targetPackage)
                 interceptionRepository.completeAttempt(
-                    id = attemptId.await(),
+                    id = currentAttemptId.await(),
                     outcome = InterventionOutcome.WALKED_AWAY,
-                    intention = state.intentionText(),
+                    intention = intention,
                     sessionLimitMinutes = null,
                 )
             }
-            _effects.send(InterventionEffect.GoHome)
+            if (interventionGeneration == generation) {
+                _effects.send(InterventionEffect.GoHome)
+            }
         }
     }
 
@@ -396,6 +570,7 @@ class InterventionViewModel @Inject constructor(
 
     override fun onCleared() {
         breathingJob?.cancel()
+        iconJob?.cancel()
         super.onCleared()
     }
 
@@ -411,16 +586,22 @@ class InterventionViewModel @Inject constructor(
     }
 }
 
-private fun readModes(savedStateHandle: SavedStateHandle): List<FrictionMode> {
-    val encoded = savedStateHandle
-        .get<ArrayList<String>>(PauseInterventionActivity.EXTRA_FRICTION_MODES)
+internal fun parseModes(
+    encoded: List<String>?,
+    legacy: String?,
+): List<FrictionMode> {
+    val parsed = encoded
         .orEmpty()
         .mapNotNull { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
-    val legacy = savedStateHandle
-        .get<String>(PauseInterventionActivity.EXTRA_FRICTION_MODE)
+    val fallback = legacy
         ?.let { runCatching { FrictionMode.valueOf(it) }.getOrNull() }
 
-    return encoded.ifEmpty { listOfNotNull(legacy) }
+    return parsed.ifEmpty { listOfNotNull(fallback) }
         .distinct()
         .ifEmpty { listOf(FrictionMode.BREATHING) }
 }
+
+private fun readModes(savedStateHandle: SavedStateHandle): List<FrictionMode> = parseModes(
+    encoded = savedStateHandle.get<ArrayList<String>>(PauseInterventionActivity.EXTRA_FRICTION_MODES),
+    legacy = savedStateHandle.get<String>(PauseInterventionActivity.EXTRA_FRICTION_MODE),
+)

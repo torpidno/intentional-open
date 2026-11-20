@@ -27,7 +27,7 @@ class SessionStartupReconciler @Inject constructor(
     private val clock: Clock,
 ) {
 
-    suspend fun reconcile() {
+    suspend fun reconcile(startedBeforeMillis: Long = clock.millis()) {
         val active = persistence.read()
         val attemptId = active?.attemptId
         if (attemptId != null) {
@@ -44,6 +44,6 @@ class SessionStartupReconciler @Inject constructor(
                 cooldownTracker.setCooldown(active.packageName, remaining)
             }
         }
-        interceptionRepository.completeStalePendingAttempts()
+        interceptionRepository.completeStalePendingAttempts(startedBeforeMillis)
     }
 }

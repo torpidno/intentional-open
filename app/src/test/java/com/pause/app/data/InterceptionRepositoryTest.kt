@@ -9,6 +9,7 @@ import com.pause.app.data.local.InterventionLogEntity
 import com.pause.app.data.local.PauseDatabase
 import com.pause.app.data.repository.InterceptionRepository
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.HistoryArchiveEntry
 import com.pause.app.domain.model.InterventionOutcome
 import java.time.Clock
 import java.time.Instant
@@ -171,8 +172,70 @@ class InterceptionRepositoryTest {
             exported[1].frictionModes,
         )
 
+        repository.clearHistory()
         assertEquals(2, repository.importHistory(exported))
-        assertEquals(4, repository.exportHistory().size)
+        assertEquals(exported, repository.exportHistory())
+    }
+
+    @Test
+    fun `re-importing the same archive inserts zero duplicates`() = runTest {
+        dao.insert(
+            InterventionLogEntity(
+                packageName = INSTAGRAM,
+                appLabel = "Instagram",
+                timestampMillis = 1_000L,
+                outcome = InterventionOutcome.WALKED_AWAY,
+                frictionMode = FrictionMode.INTENTION,
+                frictionModeSequence = "INTENTION",
+            ),
+        )
+        dao.insert(
+            InterventionLogEntity(
+                packageName = TIKTOK,
+                appLabel = "TikTok",
+                timestampMillis = 2_000L,
+                outcome = InterventionOutcome.PROCEEDED,
+                frictionMode = FrictionMode.TIME_LIMIT,
+                frictionModeSequence = "TIME_LIMIT,BREATHING",
+                intention = "Watch one video",
+                sessionLimitMinutes = 15,
+            ),
+        )
+
+        val exported = repository.exportHistory()
+
+        assertEquals(0, repository.importHistory(exported))
+        assertEquals(2, repository.exportHistory().size)
+
+        val novelEntry = HistoryArchiveEntry(
+            timestampMillis = 3_000L,
+            packageName = INSTAGRAM,
+            appLabel = "Instagram",
+            outcome = InterventionOutcome.PROCEEDED,
+            frictionModes = listOf(FrictionMode.INTENTION, FrictionMode.BREATHING),
+            intention = "Reply to message",
+            sessionLimitMinutes = null,
+        )
+        // Mixed batch with existing rows and in-batch duplicates only inserts unique new rows.
+        assertEquals(
+            1,
+            repository.importHistory(exported + listOf(novelEntry, novelEntry)),
+        )
+        assertEquals(exported + novelEntry, repository.exportHistory())
+    }
+
+    @Test
+    fun `completeStalePendingAttempts with cutoff only closes earlier pending rows`() = runTest {
+        insert(INSTAGRAM, "Instagram", 999L, InterventionOutcome.PENDING)
+        insert(TIKTOK, "TikTok", 1_000L, InterventionOutcome.PENDING)
+        insert(INSTAGRAM, "Instagram", 1_500L, InterventionOutcome.PENDING)
+
+        repository.completeStalePendingAttempts(beforeMillis = 1_000L)
+
+        val byTimestamp = repository.exportHistory().associateBy { it.timestampMillis }
+        assertEquals(InterventionOutcome.WALKED_AWAY, byTimestamp.getValue(999L).outcome)
+        assertEquals(InterventionOutcome.PENDING, byTimestamp.getValue(1_000L).outcome)
+        assertEquals(InterventionOutcome.PENDING, byTimestamp.getValue(1_500L).outcome)
     }
 
     @Test

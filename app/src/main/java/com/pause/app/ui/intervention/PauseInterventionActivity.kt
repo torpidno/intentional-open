@@ -84,6 +84,15 @@ class PauseInterventionActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        viewModel.handleNewIntervention(
+            newPackageName = extractPackageName(intent),
+            newModes = extractModes(intent),
+        )
+    }
+
     /** Primary CTA: leave the pause and return to the launcher. */
     private fun goHome() {
         startActivity(
@@ -98,6 +107,14 @@ class PauseInterventionActivity : ComponentActivity() {
         const val EXTRA_PACKAGE_NAME = "com.pause.app.extra.PACKAGE_NAME"
         const val EXTRA_FRICTION_MODE = "com.pause.app.extra.FRICTION_MODE"
         const val EXTRA_FRICTION_MODES = "com.pause.app.extra.FRICTION_MODES"
+
+        internal fun extractPackageName(intent: Intent): String =
+            intent.getStringExtra(EXTRA_PACKAGE_NAME).orEmpty()
+
+        internal fun extractModes(intent: Intent): List<FrictionMode> = parseModes(
+            encoded = intent.getStringArrayListExtra(EXTRA_FRICTION_MODES),
+            legacy = intent.getStringExtra(EXTRA_FRICTION_MODE),
+        )
 
         /** Builds the intent used by the accessibility service. */
         fun intent(context: Context, packageName: String, modes: List<FrictionMode>): Intent =

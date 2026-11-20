@@ -31,6 +31,12 @@ interface InterventionLogDao {
     @Query("UPDATE intervention_logs SET outcome = :outcome WHERE outcome = 'PENDING'")
     suspend fun completeAllPending(outcome: InterventionOutcome)
 
+    /** Closes attempts recorded before [beforeMillis] whose pause surface disappeared with the process. */
+    @Query(
+        "UPDATE intervention_logs SET outcome = :outcome WHERE outcome = 'PENDING' AND timestampMillis < :beforeMillis",
+    )
+    suspend fun completeAllPendingBefore(outcome: InterventionOutcome, beforeMillis: Long)
+
     @Query(
         """
         SELECT COUNT(*) FROM intervention_logs

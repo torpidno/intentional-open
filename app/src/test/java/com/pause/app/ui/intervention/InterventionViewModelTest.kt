@@ -5,10 +5,14 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.pause.app.data.local.AppTriggerCount
 import com.pause.app.data.local.InterventionLogDao
 import com.pause.app.data.local.InterventionLogEntity
+import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.data.preferences.SettingsRepository
 import com.pause.app.data.repository.InstalledAppsRepository
 import com.pause.app.data.repository.InterceptionRepository
@@ -24,6 +28,7 @@ import com.pause.app.util.FakeTimeSource
 import java.io.IOException
 import java.time.Clock
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -43,6 +49,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -163,6 +170,329 @@ class InterventionViewModelTest {
             assertTrue(effects.single() is InterventionEffect.OpenTargetApp)
         }
 
+    @Test
+    fun `multi-step intention then breathing runs countdown, unlocks, and preserves intention`() =
+        runTest(dispatcher) {
+            val mutableClock = MutableClock(1_000_000L)
+            val dao = FakeInterventionLogDao()
+            val persistence = GatedSessionPersistence(CompletableDeferred(Unit))
+            val manager = manager(persistence, this, mutableClock)
+            val modes = listOf(FrictionMode.INTENTION, FrictionMode.BREATHING)
+            val handle = SavedStateHandle(
+                mapOf(
+                    PauseInterventionActivity.EXTRA_PACKAGE_NAME to context.packageName,
+                    PauseInterventionActivity.EXTRA_FRICTION_MODES to
+                        ArrayList(modes.map { it.name }),
+                ),
+            )
+            val viewModel = viewModel(
+                manager = manager,
+                modes = modes,
+                savedStateHandle = handle,
+                dao = dao,
+                testClock = mutableClock,
+            )
+            val effects = collectEffects(viewModel)
+
+            runCurrent()
+            assertEquals(FrictionMode.INTENTION, viewModel.uiState.value.mode)
+            assertEquals(0, viewModel.uiState.value.stepIndex)
+            assertFalse(viewModel.uiState.value.isUnlocked)
+            assertNull(handle.get<Long>("pause_ends_at"))
+
+            viewModel.selectReason("Check a message")
+            viewModel.updateNote("Reply to Sam")
+            viewModel.continueToTargetApp()
+
+            // Entering step 2 (BREATHING) initializes the countdown and keeps Continue locked.
+            val totalMillis = PauseSettings.DEFAULT_BREATHING_SECONDS * 1_000L
+            assertEquals(FrictionMode.BREATHING, viewModel.uiState.value.mode)
+            assertEquals(1, viewModel.uiState.value.stepIndex)
+            assertEquals(totalMillis, viewModel.uiState.value.remainingMillis)
+            assertEquals(0f, viewModel.uiState.value.breathProgress, 0.001f)
+            assertFalse(viewModel.uiState.value.isUnlocked)
+            assertEquals(1_000_000L + totalMillis, handle.get<Long>("pause_ends_at"))
+
+            // Mid-countdown: progress advances, Continue still blocked.
+            mutableClock.advanceBy(2_000L)
+            advanceTimeBy(50L)
+            runCurrent()
+            assertEquals(totalMillis - 2_000L, viewModel.uiState.value.remainingMillis)
+            assertEquals(2_000f / totalMillis, viewModel.uiState.value.breathProgress, 0.001f)
+            assertFalse(viewModel.uiState.value.isUnlocked)
+            viewModel.continueToTargetApp()
+            runCurrent()
+            assertTrue(effects.isEmpty())
+
+            // End of countdown: unlocks and preserves step 1's intention on completion.
+            mutableClock.advanceBy(totalMillis - 2_000L)
+            advanceTimeBy(50L)
+            runCurrent()
+            assertEquals(0L, viewModel.uiState.value.remainingMillis)
+            assertEquals(1f, viewModel.uiState.value.breathProgress, 0.001f)
+            assertTrue(viewModel.uiState.value.isUnlocked)
+
+            viewModel.continueToTargetApp()
+            runCurrent()
+            runCurrent()
+
+            assertEquals(1, effects.size)
+            assertTrue(effects.single() is InterventionEffect.OpenTargetApp)
+            val completion = dao.completions.single()
+            assertEquals(InterventionOutcome.PROCEEDED, completion.outcome)
+            assertEquals("Check a message — Reply to Sam", completion.intention)
+            assertNull(completion.sessionLimitMinutes)
+        }
+
+    @Test
+    fun `time limit then breathing restores remaining countdown across process death`() =
+        runTest(dispatcher) {
+            val mutableClock = MutableClock(1_000_000L)
+            val dao = FakeInterventionLogDao()
+            val persistence = GatedSessionPersistence(CompletableDeferred(Unit))
+            val manager = manager(persistence, this, mutableClock)
+            val modes = listOf(FrictionMode.TIME_LIMIT, FrictionMode.BREATHING)
+            val handle = SavedStateHandle(
+                mapOf(
+                    PauseInterventionActivity.EXTRA_PACKAGE_NAME to context.packageName,
+                    PauseInterventionActivity.EXTRA_FRICTION_MODES to
+                        ArrayList(modes.map { it.name }),
+                ),
+            )
+            val firstStore = ViewModelStore()
+            val first = attachToStore(
+                firstStore,
+                viewModel(
+                    manager = manager,
+                    modes = modes,
+                    savedStateHandle = handle,
+                    dao = dao,
+                    testClock = mutableClock,
+                ),
+            )
+
+            runCurrent()
+            first.selectSessionLimit(15)
+            first.continueToTargetApp()
+
+            val totalMillis = PauseSettings.DEFAULT_BREATHING_SECONDS * 1_000L
+            mutableClock.advanceBy(2_000L)
+            advanceTimeBy(50L)
+            runCurrent()
+            assertEquals(totalMillis - 2_000L, first.uiState.value.remainingMillis)
+
+            // Simulate process death mid-breathing step.
+            firstStore.clear()
+            mutableClock.advanceBy(1_000L)
+
+            val restoredStore = ViewModelStore()
+            val restored = attachToStore(
+                restoredStore,
+                viewModel(
+                    manager = manager,
+                    modes = modes,
+                    savedStateHandle = handle,
+                    dao = dao,
+                    testClock = mutableClock,
+                ),
+            )
+            val effects = collectEffects(restored)
+
+            // Restored ViewModel resumes from the saved deadline (2s left), not a reset 5s.
+            assertEquals(FrictionMode.BREATHING, restored.uiState.value.mode)
+            assertEquals(1, restored.uiState.value.stepIndex)
+            assertEquals(15, restored.uiState.value.selectedLimitMinutes)
+            assertEquals(totalMillis - 3_000L, restored.uiState.value.remainingMillis)
+            assertFalse(restored.uiState.value.isUnlocked)
+            assertEquals(1, dao.inserted.size)
+
+            mutableClock.advanceBy(totalMillis - 3_000L)
+            advanceTimeBy(50L)
+            runCurrent()
+            assertTrue(restored.uiState.value.isUnlocked)
+
+            restored.continueToTargetApp()
+            runCurrent()
+            runCurrent()
+
+            assertEquals(1, effects.size)
+            assertTrue(effects.single() is InterventionEffect.OpenTargetApp)
+            assertEquals(15, persistence.stored?.limitMinutes)
+            val completion = dao.completions.single()
+            assertEquals(InterventionOutcome.PROCEEDED, completion.outcome)
+            assertEquals(15, completion.sessionLimitMinutes)
+            restoredStore.clear()
+        }
+
+    @Test
+    fun `handleNewIntervention switches apps, closes prior attempt, and starts new timer`() =
+        runTest(dispatcher) {
+            val mutableClock = MutableClock(1_000_000L)
+            val dao = FakeInterventionLogDao()
+            val cooldowns = CooldownTracker(FakeTimeSource())
+            val persistence = GatedSessionPersistence(CompletableDeferred(Unit))
+            val manager = manager(persistence, this, mutableClock)
+            val initialPackage = "com.instagram.android"
+            val nextPackage = context.packageName
+            val initialModes = listOf(FrictionMode.INTENTION, FrictionMode.TIME_LIMIT)
+            val handle = SavedStateHandle(
+                mapOf(
+                    PauseInterventionActivity.EXTRA_PACKAGE_NAME to initialPackage,
+                    PauseInterventionActivity.EXTRA_FRICTION_MODES to
+                        ArrayList(initialModes.map { it.name }),
+                ),
+            )
+            cooldowns.setCooldown(initialPackage, 4_000L)
+
+            val store = ViewModelStore()
+            val vm = attachToStore(
+                store,
+                viewModel(
+                    manager = manager,
+                    modes = initialModes,
+                    savedStateHandle = handle,
+                    dao = dao,
+                    cooldownTracker = cooldowns,
+                    testClock = mutableClock,
+                ),
+            )
+            val effects = collectEffects(vm)
+
+            runCurrent()
+            vm.selectReason("Check a message")
+            vm.continueToTargetApp()
+            vm.selectSessionLimit(15)
+            assertEquals(FrictionMode.TIME_LIMIT, vm.uiState.value.mode)
+
+            // Same active package (not completing) and blank package are ignored.
+            vm.handleNewIntervention(initialPackage, listOf(FrictionMode.BREATHING))
+            vm.handleNewIntervention("   ", listOf(FrictionMode.BREATHING))
+            runCurrent()
+            assertEquals(initialPackage, vm.uiState.value.packageName)
+            assertEquals(FrictionMode.TIME_LIMIT, vm.uiState.value.mode)
+            assertEquals(1, dao.inserted.size)
+            assertTrue(dao.completions.isEmpty())
+
+            // Switching to a different app closes the prior attempt as WALKED_AWAY,
+            // clears its launch guard, resets state/SavedStateHandle, and starts BREATHING.
+            vm.handleNewIntervention(
+                nextPackage,
+                listOf(FrictionMode.BREATHING, FrictionMode.INTENTION),
+            )
+            runCurrent()
+
+            assertFalse(cooldowns.isCoolingDown(initialPackage))
+            assertTrue(effects.isEmpty())
+            assertEquals(2, dao.inserted.size)
+            assertEquals(nextPackage, dao.inserted[1].packageName)
+
+            val priorCompletion = dao.completions.single()
+            assertEquals(1L, priorCompletion.id)
+            assertEquals(InterventionOutcome.WALKED_AWAY, priorCompletion.outcome)
+            assertEquals("Check a message", priorCompletion.intention)
+            assertNull(priorCompletion.sessionLimitMinutes)
+
+            val state = vm.uiState.value
+            val totalMillis = PauseSettings.DEFAULT_BREATHING_SECONDS * 1_000L
+            assertEquals(nextPackage, state.packageName)
+            assertEquals(FrictionMode.BREATHING, state.mode)
+            assertEquals(2, state.modeCount)
+            assertEquals(0, state.stepIndex)
+            assertEquals(totalMillis, state.remainingMillis)
+            assertFalse(state.isUnlocked)
+            assertNull(state.selectedReason)
+            assertEquals("", state.note)
+            assertNull(state.selectedLimitMinutes)
+
+            assertEquals(nextPackage, handle.get<String>(PauseInterventionActivity.EXTRA_PACKAGE_NAME))
+            assertEquals(2L, handle.get<Long>("attempt_id"))
+            assertNull(handle.get<String>("selected_reason"))
+            assertNull(handle.get<Int>("selected_limit"))
+
+            // Breathing timer runs for the new intervention and unlocks on expiry.
+            mutableClock.advanceBy(totalMillis)
+            advanceTimeBy(50L)
+            runCurrent()
+            assertTrue(vm.uiState.value.isUnlocked)
+            store.clear()
+        }
+
+    @Test
+    fun `handleNewIntervention after completion restarts without double-closing prior attempt`() =
+        runTest(dispatcher) {
+            val dao = FakeInterventionLogDao()
+            val persistence = GatedSessionPersistence(CompletableDeferred(Unit))
+            val manager = manager(persistence, this)
+            val vm = viewModel(
+                manager = manager,
+                modes = listOf(FrictionMode.INTENTION),
+                dao = dao,
+            )
+            collectEffects(vm)
+
+            runCurrent()
+            vm.walkAway()
+            runCurrent()
+            assertTrue(vm.uiState.value.isCompleting)
+            assertEquals(1, dao.completions.size)
+
+            // Re-entering for the same package after completion starts a fresh intervention.
+            vm.handleNewIntervention(context.packageName, listOf(FrictionMode.TIME_LIMIT))
+            runCurrent()
+
+            assertFalse(vm.uiState.value.isCompleting)
+            assertEquals(FrictionMode.TIME_LIMIT, vm.uiState.value.mode)
+            assertEquals(2, dao.inserted.size)
+            assertEquals(1, dao.completions.size)
+        }
+
+    @Test
+    fun `handleNewIntervention immediately after restore closes restored attempt id without clobbering new one`() =
+        runTest(dispatcher) {
+            val dao = FakeInterventionLogDao()
+            val persistence = GatedSessionPersistence(CompletableDeferred(Unit))
+            val manager = manager(persistence, this)
+            val restoredAttemptId = 42L
+            val handle = SavedStateHandle(
+                mapOf(
+                    PauseInterventionActivity.EXTRA_PACKAGE_NAME to "com.instagram.android",
+                    PauseInterventionActivity.EXTRA_FRICTION_MODES to
+                        arrayListOf(FrictionMode.INTENTION.name),
+                    "attempt_id" to restoredAttemptId,
+                ),
+            )
+            val vm = viewModel(
+                manager = manager,
+                modes = listOf(FrictionMode.INTENTION),
+                savedStateHandle = handle,
+                dao = dao,
+            )
+
+            // Invoke handleNewIntervention before runCurrent() so no init coroutines have run yet.
+            vm.handleNewIntervention(context.packageName, listOf(FrictionMode.TIME_LIMIT))
+            runCurrent()
+
+            // Only the new intervention inserted a row; the restored attempt was closed by its saved ID.
+            assertEquals(1, dao.inserted.size)
+            assertEquals(context.packageName, dao.inserted.single().packageName)
+            assertEquals(1L, handle.get<Long>("attempt_id"))
+
+            val completion = dao.completions.single()
+            assertEquals(restoredAttemptId, completion.id)
+            assertEquals(InterventionOutcome.WALKED_AWAY, completion.outcome)
+        }
+
+    private fun attachToStore(
+        store: ViewModelStore,
+        instance: InterventionViewModel,
+    ): InterventionViewModel = ViewModelProvider(
+        store,
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = instance as T
+        },
+    )[InterventionViewModel::class.java]
+
     private fun TestScope.collectEffects(
         viewModel: InterventionViewModel,
     ): List<InterventionEffect> {
@@ -176,12 +506,13 @@ class InterventionViewModelTest {
     private fun manager(
         persistence: SessionPersistence,
         scope: TestScope,
+        testClock: Clock = clock,
     ): SessionLimitManager = SessionLimitManager(
         scope = scope.backgroundScope,
         persistence = persistence,
         alarmScheduler = RecordingAlarmScheduler(),
         notifier = RecordingNotifier(),
-        clock = clock,
+        clock = testClock,
     )
 
     private fun TestScope.viewModel(
@@ -194,6 +525,9 @@ class InterventionViewModelTest {
                     ArrayList(modes.map { it.name }),
             ),
         ),
+        dao: FakeInterventionLogDao = FakeInterventionLogDao(),
+        cooldownTracker: CooldownTracker = CooldownTracker(FakeTimeSource()),
+        testClock: Clock = clock,
     ): InterventionViewModel {
         val settings = SettingsRepository(
             dataStore = FakePreferencesDataStore(),
@@ -204,8 +538,8 @@ class InterventionViewModelTest {
             ioDispatcher = UnconfinedTestDispatcher(testScheduler),
         )
         val interception = InterceptionRepository(
-            dao = FakeInterventionLogDao(),
-            clock = clock,
+            dao = dao,
+            clock = testClock,
         )
         return InterventionViewModel(
             savedStateHandle = savedStateHandle,
@@ -213,9 +547,24 @@ class InterventionViewModelTest {
             installedAppsRepository = installedApps,
             interceptionRepository = interception,
             sessionStarter = manager,
-            cooldownTracker = CooldownTracker(FakeTimeSource()),
-            clock = clock,
+            cooldownTracker = cooldownTracker,
+            clock = testClock,
         )
+    }
+
+    private class MutableClock(
+        private var currentMillis: Long,
+        private val zoneId: ZoneId = ZoneOffset.UTC,
+    ) : Clock() {
+        fun advanceBy(millis: Long) {
+            currentMillis += millis
+        }
+
+        override fun getZone(): ZoneId = zoneId
+
+        override fun withZone(zone: ZoneId): Clock = MutableClock(currentMillis, zone)
+
+        override fun instant(): Instant = Instant.ofEpochMilli(currentMillis)
     }
 
     private class GatedSessionPersistence(
@@ -254,11 +603,21 @@ class InterventionViewModelTest {
     }
 
     private class FakeInterventionLogDao : InterventionLogDao {
+        data class Completion(
+            val id: Long,
+            val outcome: InterventionOutcome,
+            val intention: String?,
+            val sessionLimitMinutes: Int?,
+        )
+
         private var nextId = 1L
+        val inserted = mutableListOf<InterventionLogEntity>()
         val completed = mutableListOf<Long>()
+        val completions = mutableListOf<Completion>()
 
         override suspend fun insert(log: InterventionLogEntity): Long {
             val id = nextId++
+            inserted += log.copy(id = id)
             return id
         }
 
@@ -269,9 +628,15 @@ class InterventionViewModelTest {
             sessionLimitMinutes: Int?,
         ) {
             completed += id
+            completions += Completion(id, outcome, intention, sessionLimitMinutes)
         }
 
         override suspend fun completeAllPending(outcome: InterventionOutcome) = Unit
+
+        override suspend fun completeAllPendingBefore(
+            outcome: InterventionOutcome,
+            beforeMillis: Long,
+        ) = Unit
 
         override fun observeAttemptCount(startMillis: Long, endMillis: Long): Flow<Int> =
             flowOf(0)
