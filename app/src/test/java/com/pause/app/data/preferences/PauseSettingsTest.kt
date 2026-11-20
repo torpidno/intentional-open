@@ -178,6 +178,66 @@ class PauseSettingsTest {
     }
 
     @Test
+    fun `an overnight window on a subset of days spills into the next morning only`() {
+        val settings = PauseSettings(
+            scheduleEnabled = true,
+            scheduleDays = setOf(DayOfWeek.MONDAY),
+            scheduleStartMinutes = 22 * 60,
+            scheduleEndMinutes = 6 * 60,
+        )
+
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 21, minute = 59)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 22, minute = 0)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 23, minute = 59)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.TUESDAY, hour = 0, minute = 0)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.TUESDAY, hour = 5, minute = 59)))
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.TUESDAY, hour = 6, minute = 0)))
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.TUESDAY, hour = 22, minute = 0)))
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 2, minute = 0)))
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.SUNDAY, hour = 23, minute = 0)))
+    }
+
+    @Test
+    fun `an overnight window on Sunday wraps into Monday morning`() {
+        val settings = PauseSettings(
+            scheduleEnabled = true,
+            scheduleDays = setOf(DayOfWeek.SUNDAY),
+            scheduleStartMinutes = 22 * 60,
+            scheduleEndMinutes = 6 * 60,
+        )
+
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.SUNDAY, hour = 21, minute = 59)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.SUNDAY, hour = 22, minute = 0)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.SUNDAY, hour = 23, minute = 59)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 0, minute = 0)))
+        assertTrue(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 5, minute = 59)))
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 6, minute = 0)))
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 22, minute = 0)))
+        assertFalse(settings.isScheduleActive(dayAt(DayOfWeek.SUNDAY, hour = 2, minute = 0)))
+    }
+
+    @Test
+    fun `equal schedule endpoints and empty schedule days respect selected days`() {
+        val mondayOnly = PauseSettings(
+            scheduleEnabled = true,
+            scheduleDays = setOf(DayOfWeek.MONDAY),
+            scheduleStartMinutes = 0,
+            scheduleEndMinutes = 0,
+        )
+        assertTrue(mondayOnly.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 0, minute = 0)))
+        assertFalse(mondayOnly.isScheduleActive(dayAt(DayOfWeek.TUESDAY, hour = 0, minute = 0)))
+
+        val noDaysOvernight = PauseSettings(
+            scheduleEnabled = true,
+            scheduleDays = emptySet(),
+            scheduleStartMinutes = 22 * 60,
+            scheduleEndMinutes = 6 * 60,
+        )
+        assertFalse(noDaysOvernight.isScheduleActive(dayAt(DayOfWeek.MONDAY, hour = 23, minute = 0)))
+        assertFalse(noDaysOvernight.isScheduleActive(dayAt(DayOfWeek.TUESDAY, hour = 2, minute = 0)))
+    }
+
+    @Test
     fun `equal schedule endpoints mean all-day`() {
         val settings = PauseSettings(
             scheduleEnabled = true,
@@ -201,5 +261,11 @@ class PauseSettingsTest {
     }
 
     private fun mondayAt(hour: Int, minute: Int): ZonedDateTime =
-        ZonedDateTime.of(2026, 11, 16, hour, minute, 0, 0, ZoneOffset.UTC)
+        dayAt(DayOfWeek.MONDAY, hour, minute)
+
+    private fun dayAt(day: DayOfWeek, hour: Int, minute: Int): ZonedDateTime {
+        // 2026-11-16 is a Monday (DayOfWeek.MONDAY.value == 1).
+        val dayOfMonth = 16 + (day.value - DayOfWeek.MONDAY.value)
+        return ZonedDateTime.of(2026, 11, dayOfMonth, hour, minute, 0, 0, ZoneOffset.UTC)
+    }
 }

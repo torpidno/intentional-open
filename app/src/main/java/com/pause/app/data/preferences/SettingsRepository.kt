@@ -13,6 +13,7 @@ import com.pause.app.di.ApplicationScope
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.moveFrictionMode
 import java.io.IOException
+import java.time.Clock
 import java.time.DayOfWeek
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -35,6 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 class SettingsRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     @ApplicationScope scope: CoroutineScope,
+    private val clock: Clock = Clock.systemDefaultZone(),
 ) {
 
     val settings: StateFlow<PauseSettings> = dataStore.data
@@ -97,26 +99,31 @@ class SettingsRepository @Inject constructor(
         if (packageName.isBlank() || minutes <= 0) return
         setAppSnoozedUntil(
             packageName = packageName,
-            untilMillis = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(minutes.toLong()),
+            untilMillis = clock.millis() + TimeUnit.MINUTES.toMillis(minutes.toLong()),
         )
     }
 
     suspend fun setAppSnoozedUntil(packageName: String, untilMillis: Long) {
         if (packageName.isBlank() || untilMillis <= 0L) return
         dataStore.edit { preferences ->
-            val snoozes = preferences.snoozedUntilMillis().toMutableMap()
-            snoozes[packageName] = untilMillis
-            preferences[Keys.SNOOZED_UNTIL] = encodeSnoozes(snoozes)
+            val now = clock.millis()
+            val existing = preferences.snoozedUntilMillis()
+            val snoozes = existing.filterValues { it > now }.toMutableMap()
+            if (untilMillis > now) {
+                snoozes[packageName] = untilMillis
+            } else {
+                snoozes.remove(packageName)
+            }
+            if (snoozes != existing) {
+                preferences[Keys.SNOOZED_UNTIL] = encodeSnoozes(snoozes)
+            }
         }
     }
 
     suspend fun clearAppSnooze(packageName: String) {
         if (packageName.isBlank()) return
         dataStore.edit { preferences ->
-            val snoozes = preferences.snoozedUntilMillis().toMutableMap()
-            if (snoozes.remove(packageName) != null) {
-                preferences[Keys.SNOOZED_UNTIL] = encodeSnoozes(snoozes)
-            }
+            preferences.pruneAndRemoveSnooze(packageName)
         }
     }
 
@@ -185,6 +192,7 @@ class SettingsRepository @Inject constructor(
             } else {
                 monitoredPackages -= packageName
                 pausedPackages -= packageName
+                preferences.pruneAndRemoveSnooze(packageName)
             }
             preferences[Keys.MONITORED_PACKAGES] = monitoredPackages
             preferences[Keys.PAUSED_PACKAGES] = pausedPackages
@@ -202,7 +210,12 @@ class SettingsRepository @Inject constructor(
             val monitoredPackages = preferences[Keys.MONITORED_PACKAGES].orEmpty().toMutableSet()
             val pausedPackages = preferences[Keys.PAUSED_PACKAGES].orEmpty().toMutableSet()
             nowMonitored = packageName !in monitoredPackages
-            if (nowMonitored) monitoredPackages += packageName else monitoredPackages -= packageName
+            if (nowMonitored) {
+                monitoredPackages += packageName
+            } else {
+                monitoredPackages -= packageName
+                preferences.pruneAndRemoveSnooze(packageName)
+            }
             pausedPackages -= packageName
             preferences[Keys.MONITORED_PACKAGES] = monitoredPackages
             preferences[Keys.PAUSED_PACKAGES] = pausedPackages
@@ -241,6 +254,15 @@ class SettingsRepository @Inject constructor(
                 overrides[packageName] = normalized
             }
             preferences[Keys.APP_MODE_OVERRIDES] = encodeOverrides(overrides)
+        }
+    }
+
+    private fun MutablePreferences.pruneAndRemoveSnooze(packageName: String) {
+        val now = clock.millis()
+        val existing = snoozedUntilMillis()
+        val updated = existing.filter { (pkg, until) -> pkg != packageName && until > now }
+        if (updated != existing) {
+            this[Keys.SNOOZED_UNTIL] = encodeSnoozes(updated)
         }
     }
 }

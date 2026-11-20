@@ -8,11 +8,17 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.pause.app.domain.model.FrictionMode
 import java.io.File
+import java.time.Clock
 import java.time.DayOfWeek
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -27,14 +33,20 @@ class SettingsRepositoryTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
-    private fun TestScope.createRepository(): Pair<DataStore<Preferences>, SettingsRepository> {
+    private fun TestScope.createRepository(
+        clock: Clock? = null,
+    ): Pair<DataStore<Preferences>, SettingsRepository> {
         val dataStore = PreferenceDataStoreFactory.create(
             scope = backgroundScope,
             produceFile = {
                 File(temporaryFolder.root, "settings.preferences_pb")
             },
         )
-        val repository = SettingsRepository(dataStore, backgroundScope)
+        val repository = if (clock == null) {
+            SettingsRepository(dataStore, backgroundScope)
+        } else {
+            SettingsRepository(dataStore, backgroundScope, clock)
+        }
         return dataStore to repository
     }
 
@@ -189,5 +201,129 @@ class SettingsRepositoryTest {
             listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT),
             settings.defaultFrictionModes,
         )
+    }
+
+    @Test
+    fun `snoozeApp computes deadline from injected clock`() = runTest {
+        val fixedClock = Clock.fixed(Instant.ofEpochMilli(1_000_000L), ZoneOffset.UTC)
+        val (dataStore, repository) = createRepository(clock = fixedClock)
+
+        repository.snoozeApp("com.example", minutes = 15)
+
+        val expectedDeadline = 1_000_000L + 15 * 60_000L
+        val settings = repository.settings.first {
+            it.snoozedUntilMillis["com.example"] == expectedDeadline
+        }
+        assertEquals(mapOf("com.example" to expectedDeadline), settings.snoozedUntilMillis)
+        assertEquals(
+            "com.example=$expectedDeadline",
+            dataStore.data.first()[stringPreferencesKey("snoozed_until")],
+        )
+    }
+
+    @Test
+    fun `setAppSnoozedUntil prunes expired snoozes including exact deadline`() = runTest {
+        val clock = MutableClock(1_000_000L)
+        val (_, repository) = createRepository(clock = clock)
+        repository.setAppSnoozedUntil("com.expired", 1_060_000L)
+        repository.setAppSnoozedUntil("com.boundary", 1_120_000L)
+        repository.setAppSnoozedUntil("com.active", 1_300_000L)
+        repository.settings.first { it.snoozedUntilMillis.size == 3 }
+
+        clock.advanceBy(120_000L) // now == 1_120_000L
+        repository.setAppSnoozedUntil("com.fresh", 1_500_000L)
+
+        val pruned = repository.settings.first { "com.fresh" in it.snoozedUntilMillis }
+        assertEquals(
+            mapOf(
+                "com.active" to 1_300_000L,
+                "com.fresh" to 1_500_000L,
+            ),
+            pruned.snoozedUntilMillis,
+        )
+
+        repository.setAppSnoozedUntil("com.active", 1_120_000L)
+        val removedExpiredUpdate = repository.settings.first {
+            "com.active" !in it.snoozedUntilMillis
+        }
+        assertEquals(mapOf("com.fresh" to 1_500_000L), removedExpiredUpdate.snoozedUntilMillis)
+    }
+
+    @Test
+    fun `clearAppSnooze prunes expired snoozes even when target was not snoozed`() = runTest {
+        val clock = MutableClock(1_000_000L)
+        val (_, repository) = createRepository(clock = clock)
+        repository.setAppSnoozedUntil("com.expired", 1_050_000L)
+        repository.setAppSnoozedUntil("com.active", 1_200_000L)
+        repository.settings.first { it.snoozedUntilMillis.size == 2 }
+
+        clock.advanceBy(100_000L) // now == 1_100_000L
+        repository.clearAppSnooze("com.other")
+
+        val pruned = repository.settings.first { "com.expired" !in it.snoozedUntilMillis }
+        assertEquals(mapOf("com.active" to 1_200_000L), pruned.snoozedUntilMillis)
+
+        repository.clearAppSnooze("com.active")
+        val cleared = repository.settings.first { it.snoozedUntilMillis.isEmpty() }
+        assertEquals(emptyMap<String, Long>(), cleared.snoozedUntilMillis)
+    }
+
+    @Test
+    fun `unmonitoring an app with setMonitored clears its snooze and prunes expired snoozes`() =
+        runTest {
+            val clock = MutableClock(1_000_000L)
+            val (_, repository) = createRepository(clock = clock)
+            repository.setMonitored("com.target", monitored = true)
+            repository.setMonitored("com.other", monitored = true)
+            repository.setAppSnoozedUntil("com.target", 1_500_000L)
+            repository.setAppSnoozedUntil("com.expired", 1_050_000L)
+            repository.setAppSnoozedUntil("com.other", 1_600_000L)
+            repository.settings.first {
+                "com.target" in it.monitoredPackages && it.snoozedUntilMillis.size == 3
+            }
+
+            clock.advanceBy(100_000L) // now == 1_100_000L
+            repository.setMonitored("com.target", monitored = false)
+
+            val unmonitored = repository.settings.first { "com.target" !in it.monitoredPackages }
+            assertEquals(mapOf("com.other" to 1_600_000L), unmonitored.snoozedUntilMillis)
+
+            repository.setMonitored("com.target", monitored = true)
+            val reAdded = repository.settings.first { "com.target" in it.monitoredPackages }
+            assertFalse(reAdded.isSnoozed("com.target", nowMillis = 1_100_000L))
+            assertEquals(mapOf("com.other" to 1_600_000L), reAdded.snoozedUntilMillis)
+        }
+
+    @Test
+    fun `toggling an app off with toggleMonitored clears its snooze and prunes expired snoozes`() =
+        runTest {
+            val clock = MutableClock(1_000_000L)
+            val (_, repository) = createRepository(clock = clock)
+            assertTrue(repository.toggleMonitored("com.target"))
+            repository.setAppSnoozedUntil("com.target", 1_500_000L)
+            repository.setAppSnoozedUntil("com.expired", 1_050_000L)
+            repository.setAppSnoozedUntil("com.keep", 1_600_000L)
+            repository.settings.first {
+                "com.target" in it.monitoredPackages && it.snoozedUntilMillis.size == 3
+            }
+
+            clock.advanceBy(100_000L) // now == 1_100_000L
+            assertFalse(repository.toggleMonitored("com.target"))
+
+            val toggledOff = repository.settings.first { "com.target" !in it.monitoredPackages }
+            assertEquals(mapOf("com.keep" to 1_600_000L), toggledOff.snoozedUntilMillis)
+        }
+
+    private class MutableClock(
+        private var currentMillis: Long,
+        private val zoneId: ZoneId = ZoneOffset.UTC,
+    ) : Clock() {
+        fun advanceBy(deltaMillis: Long) {
+            currentMillis += deltaMillis
+        }
+
+        override fun getZone(): ZoneId = zoneId
+        override fun withZone(zone: ZoneId): Clock = MutableClock(currentMillis, zone)
+        override fun instant(): Instant = Instant.ofEpochMilli(currentMillis)
     }
 }

@@ -7,6 +7,7 @@ import android.os.PowerManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.pause.app.BuildConfig
+import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.data.preferences.SettingsRepository
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.ui.intervention.PauseInterventionActivity
@@ -78,12 +79,12 @@ class PauseAccessibilityService : AccessibilityService() {
                     "flags=${serviceInfo?.flags}",
             )
         }
-        applyPackageFilter(settingsRepository.settings.value.effectiveMonitoredPackages)
+        applyPackageFilter(activePackageFilter(settingsRepository.settings.value))
 
-        // Keep the framework-side package filter in sync with the user's picks.
+        // Keep the framework-side package filter in sync with the master switch and the user's picks.
         serviceScope.launch {
             settingsRepository.settings
-                .map { it.effectiveMonitoredPackages }
+                .map(::activePackageFilter)
                 .distinctUntilChanged()
                 .collect { packages -> applyPackageFilter(packages) }
         }
@@ -174,6 +175,14 @@ class PauseAccessibilityService : AccessibilityService() {
             .mapNotNullTo(ignored) { it.activityInfo?.packageName }
         return ignored
     }
+
+    /**
+     * Returns the package filter to register with the framework. When Pause is
+     * switched off globally, return an empty set so the framework does not wake
+     * the service for monitored apps only for [InterceptionGate] to drop them.
+     */
+    private fun activePackageFilter(settings: PauseSettings): Set<String> =
+        if (settings.isEnabled) settings.effectiveMonitoredPackages else emptySet()
 
     /**
      * Applies the runtime package filter. An empty selection is replaced with

@@ -43,20 +43,23 @@ data class PauseSettings(
 
     /**
      * Global active-hours check. [now] must be in the device's local zone.
-     * A start equal to the end means the whole day is active.
+     * A start equal to the end means the whole day is active. Overnight windows
+     * (`start > end`) belong to the day they start on, so their post-midnight
+     * portion checks whether the previous day is selected.
      */
     fun isScheduleActive(now: ZonedDateTime): Boolean {
         if (!scheduleEnabled) return true
-        if (scheduleDays.isEmpty() || now.dayOfWeek !in scheduleDays) return false
+        if (scheduleDays.isEmpty()) return false
 
         val minuteOfDay = now.hour * 60 + now.minute
         val start = scheduleStartMinutes.coerceIn(0, MINUTES_PER_DAY - 1)
         val end = scheduleEndMinutes.coerceIn(0, MINUTES_PER_DAY - 1)
-        if (start == end) return true
-        return if (start < end) {
-            minuteOfDay in start until end
-        } else {
-            minuteOfDay >= start || minuteOfDay < end
+        return when {
+            start == end -> now.dayOfWeek in scheduleDays
+            start < end -> now.dayOfWeek in scheduleDays && minuteOfDay in start until end
+            minuteOfDay >= start -> now.dayOfWeek in scheduleDays
+            minuteOfDay < end -> now.dayOfWeek.minus(1) in scheduleDays
+            else -> false
         }
     }
 
