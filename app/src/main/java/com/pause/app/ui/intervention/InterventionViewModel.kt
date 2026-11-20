@@ -61,6 +61,9 @@ data class InterventionUiState(
     val isCompleting: Boolean = false,
     /** Shown after a session deadline could not be persisted. */
     val sessionStartError: Boolean = false,
+    val isDailyLimitBlocked: Boolean = false,
+    val dailyUsedMinutes: Int = 0,
+    val dailyLimitMinutes: Int = 0,
 ) {
     val hasNextStep: Boolean
         get() = stepIndex < modeCount - 1
@@ -82,6 +85,17 @@ class InterventionViewModel @Inject constructor(
 
     private var packageName: String =
         savedStateHandle.get<String>(PauseInterventionActivity.EXTRA_PACKAGE_NAME).orEmpty()
+
+    private var isDailyLimitBlocked: Boolean =
+        savedStateHandle.get<Boolean>(PauseInterventionActivity.EXTRA_DAILY_LIMIT_BLOCKED) == true
+
+    private var dailyUsedMinutes: Int =
+        (savedStateHandle.get<Int>(PauseInterventionActivity.EXTRA_DAILY_USED_MINUTES) ?: 0)
+            .coerceAtLeast(0)
+
+    private var dailyLimitMinutes: Int =
+        (savedStateHandle.get<Int>(PauseInterventionActivity.EXTRA_DAILY_LIMIT_MINUTES) ?: 0)
+            .coerceAtLeast(0)
 
     /**
      * Ordered modes for this pause. The activity passes the list; the single
@@ -118,14 +132,15 @@ class InterventionViewModel @Inject constructor(
      * entering a BREATHING step (or restored from SavedStateHandle after
      * process death) so non-first breathing steps get their full countdown.
      */
-    private var pauseEndsAtMillis: Long? = if (restoredMode == FrictionMode.BREATHING) {
-        savedStateHandle.get<Long>(KEY_PAUSE_ENDS_AT)
-            ?: (clock.millis() + breathingSeconds * 1_000L).also {
-                savedStateHandle[KEY_PAUSE_ENDS_AT] = it
-            }
-    } else {
-        null
-    }
+    private var pauseEndsAtMillis: Long? =
+        if (!isDailyLimitBlocked && restoredMode == FrictionMode.BREATHING) {
+            savedStateHandle.get<Long>(KEY_PAUSE_ENDS_AT)
+                ?: (clock.millis() + breathingSeconds * 1_000L).also {
+                    savedStateHandle[KEY_PAUSE_ENDS_AT] = it
+                }
+        } else {
+            null
+        }
 
     /** Monotonic counter so async work from a superseded intervention is ignored. */
     private var interventionGeneration: Long = 0L
@@ -157,16 +172,20 @@ class InterventionViewModel @Inject constructor(
         }
 
     private val initialRemainingMillis: Long =
-        if (restoredMode == FrictionMode.BREATHING) {
+        if (!isDailyLimitBlocked && restoredMode == FrictionMode.BREATHING) {
             ((pauseEndsAtMillis ?: clock.millis()) - clock.millis()).coerceAtLeast(0L)
         } else {
             0L
         }
 
-    private val initialUnlocked: Boolean = when (restoredMode) {
-        FrictionMode.BREATHING -> initialRemainingMillis == 0L
-        FrictionMode.INTENTION -> restoredReason != null || restoredNote.isNotBlank()
-        FrictionMode.TIME_LIMIT -> restoredLimit != null
+    private val initialUnlocked: Boolean = if (isDailyLimitBlocked) {
+        false
+    } else {
+        when (restoredMode) {
+            FrictionMode.BREATHING -> initialRemainingMillis == 0L
+            FrictionMode.INTENTION -> restoredReason != null || restoredNote.isNotBlank()
+            FrictionMode.TIME_LIMIT -> restoredLimit != null
+        }
     }
 
     private val _uiState = MutableStateFlow(
@@ -178,7 +197,7 @@ class InterventionViewModel @Inject constructor(
             stepIndex = restoredStepIndex,
             breathingSeconds = breathingSeconds,
             remainingMillis = initialRemainingMillis,
-            breathProgress = if (restoredMode == FrictionMode.BREATHING) {
+            breathProgress = if (!isDailyLimitBlocked && restoredMode == FrictionMode.BREATHING) {
                 val totalMillis = (breathingSeconds * 1_000L).coerceAtLeast(1L)
                 ((totalMillis - initialRemainingMillis).toFloat() / totalMillis)
                     .coerceIn(0f, 1f)
@@ -189,6 +208,9 @@ class InterventionViewModel @Inject constructor(
             selectedReason = restoredReason,
             note = restoredNote,
             selectedLimitMinutes = restoredLimit,
+            isDailyLimitBlocked = isDailyLimitBlocked,
+            dailyUsedMinutes = dailyUsedMinutes,
+            dailyLimitMinutes = dailyLimitMinutes,
         ),
     )
     val uiState: StateFlow<InterventionUiState> = _uiState.asStateFlow()
@@ -203,7 +225,7 @@ class InterventionViewModel @Inject constructor(
         if (packageName.isNotBlank()) {
             loadAppIcon(packageName)
         }
-        if (restoredMode == FrictionMode.BREATHING) {
+        if (!isDailyLimitBlocked && restoredMode == FrictionMode.BREATHING) {
             startBreathingTimer()
         }
     }
@@ -249,10 +271,18 @@ class InterventionViewModel @Inject constructor(
     fun handleNewIntervention(
         newPackageName: String,
         newModes: List<FrictionMode>,
+        dailyLimitBlocked: Boolean = false,
+        dailyUsedMinutes: Int = 0,
+        dailyLimitMinutes: Int = 0,
     ) {
         if (newPackageName.isBlank()) return
         val previousState = _uiState.value
-        if (newPackageName == packageName && !previousState.isCompleting) return
+        if (newPackageName == packageName &&
+            !previousState.isCompleting &&
+            dailyLimitBlocked == previousState.isDailyLimitBlocked
+        ) {
+            return
+        }
 
         val previousPackage = packageName
         val previousAttemptId = attemptId
@@ -279,10 +309,15 @@ class InterventionViewModel @Inject constructor(
 
         val normalizedModes = newModes.distinct().ifEmpty { listOf(FrictionMode.BREATHING) }
         val firstMode = normalizedModes.first()
+        val normalizedUsedMinutes = dailyUsedMinutes.coerceAtLeast(0)
+        val normalizedLimitMinutes = dailyLimitMinutes.coerceAtLeast(0)
         val generation = ++interventionGeneration
 
         packageName = newPackageName
         modes = normalizedModes
+        isDailyLimitBlocked = dailyLimitBlocked
+        this.dailyUsedMinutes = normalizedUsedMinutes
+        this.dailyLimitMinutes = normalizedLimitMinutes
         settings = settingsRepository.settings.value
         breathingSeconds = settings.breathingDurationSeconds
 
@@ -290,6 +325,9 @@ class InterventionViewModel @Inject constructor(
         savedStateHandle[PauseInterventionActivity.EXTRA_FRICTION_MODES] =
             ArrayList(normalizedModes.map { it.name })
         savedStateHandle[PauseInterventionActivity.EXTRA_FRICTION_MODE] = firstMode.name
+        savedStateHandle[PauseInterventionActivity.EXTRA_DAILY_LIMIT_BLOCKED] = dailyLimitBlocked
+        savedStateHandle[PauseInterventionActivity.EXTRA_DAILY_USED_MINUTES] = normalizedUsedMinutes
+        savedStateHandle[PauseInterventionActivity.EXTRA_DAILY_LIMIT_MINUTES] = normalizedLimitMinutes
         savedStateHandle.remove<Long>(KEY_ATTEMPT_ID)
         savedStateHandle.remove<Long>(KEY_PAUSE_ENDS_AT)
         savedStateHandle.remove<Int>(KEY_STEP_INDEX)
@@ -300,7 +338,7 @@ class InterventionViewModel @Inject constructor(
 
         val newLabel = installedAppsRepository.labelFor(newPackageName)
         val durationMillis = (breathingSeconds * 1_000L).coerceAtLeast(0L)
-        if (firstMode == FrictionMode.BREATHING) {
+        if (!dailyLimitBlocked && firstMode == FrictionMode.BREATHING) {
             val endsAt = clock.millis() + durationMillis
             pauseEndsAtMillis = endsAt
             savedStateHandle[KEY_PAUSE_ENDS_AT] = endsAt
@@ -318,7 +356,11 @@ class InterventionViewModel @Inject constructor(
                 }
         }
 
-        val remainingMillis = if (firstMode == FrictionMode.BREATHING) durationMillis else 0L
+        val remainingMillis = if (!dailyLimitBlocked && firstMode == FrictionMode.BREATHING) {
+            durationMillis
+        } else {
+            0L
+        }
         _uiState.value = InterventionUiState(
             packageName = newPackageName,
             appLabel = newLabel,
@@ -335,17 +377,20 @@ class InterventionViewModel @Inject constructor(
             selectedLimitMinutes = null,
             isCompleting = false,
             sessionStartError = false,
+            isDailyLimitBlocked = dailyLimitBlocked,
+            dailyUsedMinutes = normalizedUsedMinutes,
+            dailyLimitMinutes = normalizedLimitMinutes,
         )
 
         loadAppIcon(newPackageName)
-        if (firstMode == FrictionMode.BREATHING) {
+        if (!dailyLimitBlocked && firstMode == FrictionMode.BREATHING) {
             startBreathingTimer()
         }
     }
 
     /** Tapping a selected intention again clears it, re-locking the CTA. */
     fun selectReason(reason: String) {
-        if (_uiState.value.isCompleting) return
+        if (_uiState.value.isCompleting || _uiState.value.isDailyLimitBlocked) return
         _uiState.update { state ->
             val next = if (state.selectedReason == reason) null else reason
             state.copy(selectedReason = next).withIntentionUnlock()
@@ -354,7 +399,7 @@ class InterventionViewModel @Inject constructor(
     }
 
     fun updateNote(note: String) {
-        if (_uiState.value.isCompleting) return
+        if (_uiState.value.isCompleting || _uiState.value.isDailyLimitBlocked) return
         _uiState.update { state ->
             state.copy(note = note.take(PauseSettings.MAX_INTENTION_LENGTH))
                 .withIntentionUnlock()
@@ -363,7 +408,7 @@ class InterventionViewModel @Inject constructor(
     }
 
     fun selectSessionLimit(minutes: Int) {
-        if (_uiState.value.isCompleting) return
+        if (_uiState.value.isCompleting || _uiState.value.isDailyLimitBlocked) return
         if (minutes !in PauseSettings.SESSION_LIMIT_OPTIONS) return
         _uiState.update {
             it.copy(selectedLimitMinutes = minutes).withIntentionUnlock()
@@ -373,7 +418,9 @@ class InterventionViewModel @Inject constructor(
 
     fun continueToTargetApp() {
         val state = _uiState.value
-        if (!state.isUnlocked || state.isCompleting || packageName.isBlank()) return
+        if (state.isDailyLimitBlocked || !state.isUnlocked || state.isCompleting || packageName.isBlank()) {
+            return
+        }
 
         // An intermediate step advances the sequence instead of launching the
         // target app. No cooldown/log outcome is written until the final step.
@@ -457,7 +504,7 @@ class InterventionViewModel @Inject constructor(
 
     /** Retries only the persistence step; the pause selections are preserved. */
     fun retrySessionStart() {
-        if (!_uiState.value.sessionStartError) return
+        if (_uiState.value.isDailyLimitBlocked || !_uiState.value.sessionStartError) return
         _uiState.update { it.copy(sessionStartError = false) }
         continueToTargetApp()
     }
@@ -550,6 +597,7 @@ class InterventionViewModel @Inject constructor(
     }
 
     private fun InterventionUiState.withIntentionUnlock(): InterventionUiState {
+        if (isDailyLimitBlocked) return copy(isUnlocked = false)
         val unlocked = when (mode) {
             FrictionMode.BREATHING -> remainingMillis == 0L
             FrictionMode.INTENTION -> selectedReason != null || note.isNotBlank()
@@ -560,7 +608,7 @@ class InterventionViewModel @Inject constructor(
 
     private fun InterventionUiState.intentionText(): String? {
         // Preserve an intention entered in an earlier step of this pause.
-        if (FrictionMode.INTENTION !in modes) return null
+        if (isDailyLimitBlocked || FrictionMode.INTENTION !in modes) return null
         val parts = listOfNotNull(
             selectedReason?.takeIf { it.isNotBlank() },
             note.trim().takeIf { it.isNotBlank() },

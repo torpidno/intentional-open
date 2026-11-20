@@ -24,6 +24,7 @@ import com.pause.app.service.SessionAlarmScheduler
 import com.pause.app.service.SessionLimitManager
 import com.pause.app.service.SessionPersistence
 import com.pause.app.service.SessionReminderSink
+import com.pause.app.service.SessionStarter
 import com.pause.app.util.FakeTimeSource
 import java.io.IOException
 import java.time.Clock
@@ -482,6 +483,484 @@ class InterventionViewModelTest {
             assertEquals(InterventionOutcome.WALKED_AWAY, completion.outcome)
         }
 
+    @Test
+    fun `breathing mode stays locked until countdown ends`() = runTest(dispatcher) {
+        val mutableClock = MutableClock(1_000_000L)
+        val dao = FakeInterventionLogDao()
+        val sessionStarter = RecordingSessionStarter()
+        val store = ViewModelStore()
+        val vm = attachToStore(
+            store,
+            viewModel(
+                manager = sessionStarter,
+                modes = listOf(FrictionMode.BREATHING),
+                dao = dao,
+                testClock = mutableClock,
+            ),
+        )
+        val effects = collectEffects(vm)
+
+        runCurrent()
+        val totalMillis = PauseSettings.DEFAULT_BREATHING_SECONDS * 1_000L
+        assertFalse(vm.uiState.value.isUnlocked)
+        assertEquals(totalMillis, vm.uiState.value.remainingMillis)
+
+        // Calling continue before countdown ends does nothing.
+        vm.continueToTargetApp()
+        runCurrent()
+        assertTrue(effects.isEmpty())
+        assertTrue(dao.completions.isEmpty())
+
+        // Still locked right before expiry.
+        mutableClock.advanceBy(totalMillis - 1_000L)
+        advanceTimeBy(50L)
+        runCurrent()
+        assertFalse(vm.uiState.value.isUnlocked)
+        assertEquals(1_000L, vm.uiState.value.remainingMillis)
+        vm.continueToTargetApp()
+        runCurrent()
+        assertTrue(effects.isEmpty())
+
+        // Unlocks once the countdown reaches zero.
+        mutableClock.advanceBy(1_000L)
+        advanceTimeBy(50L)
+        runCurrent()
+        assertTrue(vm.uiState.value.isUnlocked)
+        assertEquals(0L, vm.uiState.value.remainingMillis)
+        assertEquals(1f, vm.uiState.value.breathProgress, 0.001f)
+
+        vm.continueToTargetApp()
+        runCurrent()
+        assertEquals(1, effects.size)
+        assertTrue(effects.single() is InterventionEffect.OpenTargetApp)
+        assertEquals(InterventionOutcome.PROCEEDED, dao.completions.single().outcome)
+        assertTrue(sessionStarter.started.isEmpty())
+        store.clear()
+    }
+
+    @Test
+    fun `intention mode unlock rules handle chips, re-tap toggle, whitespace, and custom notes`() =
+        runTest(dispatcher) {
+            val sessionStarter = RecordingSessionStarter()
+            val vm = viewModel(
+                manager = sessionStarter,
+                modes = listOf(FrictionMode.INTENTION),
+            )
+            val effects = collectEffects(vm)
+
+            runCurrent()
+            assertFalse(vm.uiState.value.isUnlocked)
+
+            // Whitespace-only note keeps Continue locked.
+            vm.updateNote("   \t\n  ")
+            assertFalse(vm.uiState.value.isUnlocked)
+            vm.continueToTargetApp()
+            runCurrent()
+            assertTrue(effects.isEmpty())
+
+            // Selecting a chip unlocks; tapping the same chip again clears and re-locks.
+            vm.selectReason("Check a message")
+            assertEquals("Check a message", vm.uiState.value.selectedReason)
+            assertTrue(vm.uiState.value.isUnlocked)
+
+            vm.selectReason("Check a message")
+            assertNull(vm.uiState.value.selectedReason)
+            assertFalse(vm.uiState.value.isUnlocked)
+
+            // Custom note unlocks even without a chip; clearing to whitespace re-locks.
+            vm.updateNote("Reply to Mom")
+            assertTrue(vm.uiState.value.isUnlocked)
+
+            vm.updateNote("   ")
+            assertFalse(vm.uiState.value.isUnlocked)
+
+            // Both chip and note: clearing the chip stays unlocked because note is non-blank.
+            vm.updateNote("Quick check")
+            vm.selectReason("Look something up")
+            assertTrue(vm.uiState.value.isUnlocked)
+            vm.selectReason("Look something up")
+            assertNull(vm.uiState.value.selectedReason)
+            assertTrue(vm.uiState.value.isUnlocked)
+        }
+
+    @Test
+    fun `time limit mode stays locked until valid limit selected and ignores invalid limits`() =
+        runTest(dispatcher) {
+            val sessionStarter = RecordingSessionStarter()
+            val vm = viewModel(
+                manager = sessionStarter,
+                modes = listOf(FrictionMode.TIME_LIMIT),
+            )
+            val effects = collectEffects(vm)
+
+            runCurrent()
+            assertFalse(vm.uiState.value.isUnlocked)
+            assertNull(vm.uiState.value.selectedLimitMinutes)
+
+            // Invalid durations are ignored and keep Continue locked.
+            for (invalid in listOf(-5, 0, 1, 10, 45, 999)) {
+                vm.selectSessionLimit(invalid)
+                assertNull(vm.uiState.value.selectedLimitMinutes)
+                assertFalse(vm.uiState.value.isUnlocked)
+            }
+            vm.continueToTargetApp()
+            runCurrent()
+            assertTrue(effects.isEmpty())
+            assertTrue(sessionStarter.started.isEmpty())
+
+            // Selecting a valid duration unlocks; a subsequent invalid value does not overwrite it.
+            vm.selectSessionLimit(15)
+            assertEquals(15, vm.uiState.value.selectedLimitMinutes)
+            assertTrue(vm.uiState.value.isUnlocked)
+
+            vm.selectSessionLimit(99)
+            assertEquals(15, vm.uiState.value.selectedLimitMinutes)
+            assertTrue(vm.uiState.value.isUnlocked)
+        }
+
+    @Test
+    fun `three-step sequence breathing then intention then time limit completes once on final step`() =
+        runTest(dispatcher) {
+            val mutableClock = MutableClock(1_000_000L)
+            val dao = FakeInterventionLogDao()
+            val cooldowns = CooldownTracker(FakeTimeSource())
+            val sessionStarter = RecordingSessionStarter()
+            val modes = listOf(FrictionMode.BREATHING, FrictionMode.INTENTION, FrictionMode.TIME_LIMIT)
+            val store = ViewModelStore()
+            val vm = attachToStore(
+                store,
+                viewModel(
+                    manager = sessionStarter,
+                    modes = modes,
+                    dao = dao,
+                    cooldownTracker = cooldowns,
+                    testClock = mutableClock,
+                ),
+            )
+            val effects = collectEffects(vm)
+
+            runCurrent()
+            assertEquals(FrictionMode.BREATHING, vm.uiState.value.mode)
+            assertEquals(0, vm.uiState.value.stepIndex)
+            assertEquals(3, vm.uiState.value.modeCount)
+            assertTrue(vm.uiState.value.hasNextStep)
+
+            // Step 1: BREATHING completes -> Next advances without starting session or logging outcome.
+            val totalMillis = PauseSettings.DEFAULT_BREATHING_SECONDS * 1_000L
+            mutableClock.advanceBy(totalMillis)
+            advanceTimeBy(50L)
+            runCurrent()
+            assertTrue(vm.uiState.value.isUnlocked)
+            vm.continueToTargetApp()
+            runCurrent()
+
+            assertEquals(FrictionMode.INTENTION, vm.uiState.value.mode)
+            assertEquals(1, vm.uiState.value.stepIndex)
+            assertTrue(vm.uiState.value.hasNextStep)
+            assertFalse(vm.uiState.value.isUnlocked)
+            assertTrue(sessionStarter.started.isEmpty())
+            assertTrue(dao.completions.isEmpty())
+            assertTrue(effects.isEmpty())
+            assertFalse(cooldowns.isCoolingDown(context.packageName))
+
+            // Step 2: INTENTION completes -> Next advances without starting session or logging outcome.
+            vm.selectReason("Look something up")
+            vm.updateNote("Train times")
+            assertTrue(vm.uiState.value.isUnlocked)
+            vm.continueToTargetApp()
+            runCurrent()
+
+            assertEquals(FrictionMode.TIME_LIMIT, vm.uiState.value.mode)
+            assertEquals(2, vm.uiState.value.stepIndex)
+            assertFalse(vm.uiState.value.hasNextStep)
+            assertFalse(vm.uiState.value.isUnlocked)
+            assertTrue(sessionStarter.started.isEmpty())
+            assertTrue(dao.completions.isEmpty())
+            assertTrue(effects.isEmpty())
+            assertFalse(cooldowns.isCoolingDown(context.packageName))
+
+            // Step 3: TIME_LIMIT completes -> persists intention + limit + cooldown + starts session once.
+            vm.selectSessionLimit(15)
+            assertTrue(vm.uiState.value.isUnlocked)
+            vm.continueToTargetApp()
+            runCurrent()
+
+            val started = sessionStarter.started.single()
+            assertEquals(context.packageName, started.packageName)
+            assertEquals(15, started.limitMinutes)
+            assertEquals(1L, started.attemptId)
+            assertEquals("Look something up — Train times", started.intention)
+            assertTrue(cooldowns.isCoolingDown(context.packageName))
+
+            val completion = dao.completions.single()
+            assertEquals(InterventionOutcome.PROCEEDED, completion.outcome)
+            assertEquals("Look something up — Train times", completion.intention)
+            assertEquals(15, completion.sessionLimitMinutes)
+            assertEquals(
+                "BREATHING,INTENTION,TIME_LIMIT",
+                dao.inserted.single().frictionModeSequence,
+            )
+            assertEquals(1, effects.size)
+            assertTrue(effects.single() is InterventionEffect.OpenTargetApp)
+            store.clear()
+        }
+
+    @Test
+    fun `three-step sequence time limit then intention then breathing defers session start until final step`() =
+        runTest(dispatcher) {
+            val mutableClock = MutableClock(1_000_000L)
+            val dao = FakeInterventionLogDao()
+            val cooldowns = CooldownTracker(FakeTimeSource())
+            val sessionStarter = RecordingSessionStarter()
+            val modes = listOf(FrictionMode.TIME_LIMIT, FrictionMode.INTENTION, FrictionMode.BREATHING)
+            val store = ViewModelStore()
+            val vm = attachToStore(
+                store,
+                viewModel(
+                    manager = sessionStarter,
+                    modes = modes,
+                    dao = dao,
+                    cooldownTracker = cooldowns,
+                    testClock = mutableClock,
+                ),
+            )
+            val effects = collectEffects(vm)
+
+            runCurrent()
+            // Step 1: TIME_LIMIT -> Next must NOT start the session yet.
+            vm.selectSessionLimit(30)
+            vm.continueToTargetApp()
+            runCurrent()
+            assertEquals(FrictionMode.INTENTION, vm.uiState.value.mode)
+            assertEquals(1, vm.uiState.value.stepIndex)
+            assertTrue(sessionStarter.started.isEmpty())
+            assertTrue(dao.completions.isEmpty())
+            assertTrue(effects.isEmpty())
+            assertFalse(cooldowns.isCoolingDown(context.packageName))
+
+            // Step 2: INTENTION -> Next starts BREATHING countdown, still no session/history completion.
+            vm.selectReason("Work / study")
+            vm.continueToTargetApp()
+            runCurrent()
+            assertEquals(FrictionMode.BREATHING, vm.uiState.value.mode)
+            assertEquals(2, vm.uiState.value.stepIndex)
+            assertFalse(vm.uiState.value.isUnlocked)
+            assertTrue(sessionStarter.started.isEmpty())
+            assertTrue(dao.completions.isEmpty())
+            assertTrue(effects.isEmpty())
+            assertFalse(cooldowns.isCoolingDown(context.packageName))
+
+            // Step 3: BREATHING finishes -> Continue starts session once and records full outcome.
+            val totalMillis = PauseSettings.DEFAULT_BREATHING_SECONDS * 1_000L
+            mutableClock.advanceBy(totalMillis)
+            advanceTimeBy(50L)
+            runCurrent()
+            assertTrue(vm.uiState.value.isUnlocked)
+            vm.continueToTargetApp()
+            runCurrent()
+
+            val started = sessionStarter.started.single()
+            assertEquals(30, started.limitMinutes)
+            assertEquals("Work / study", started.intention)
+            assertTrue(cooldowns.isCoolingDown(context.packageName))
+
+            val completion = dao.completions.single()
+            assertEquals(InterventionOutcome.PROCEEDED, completion.outcome)
+            assertEquals("Work / study", completion.intention)
+            assertEquals(30, completion.sessionLimitMinutes)
+            assertEquals(1, effects.size)
+            assertTrue(effects.single() is InterventionEffect.OpenTargetApp)
+            store.clear()
+        }
+
+    @Test
+    fun `walkAway mid-sequence cancels session, clears cooldown, writes intention without limit, and goes home`() =
+        runTest(dispatcher) {
+            val dao = FakeInterventionLogDao()
+            val cooldowns = CooldownTracker(FakeTimeSource())
+            val sessionStarter = RecordingSessionStarter()
+            val modes = listOf(FrictionMode.TIME_LIMIT, FrictionMode.INTENTION, FrictionMode.BREATHING)
+            cooldowns.setCooldown(context.packageName, 4_000L)
+
+            val vm = viewModel(
+                manager = sessionStarter,
+                modes = modes,
+                dao = dao,
+                cooldownTracker = cooldowns,
+            )
+            val effects = collectEffects(vm)
+
+            runCurrent()
+            vm.selectSessionLimit(15)
+            vm.continueToTargetApp()
+            vm.selectReason("Check a message")
+            vm.updateNote("DM Alex")
+
+            vm.walkAway()
+            runCurrent()
+
+            assertTrue(sessionStarter.started.isEmpty())
+            assertEquals(listOf<String?>(context.packageName), sessionStarter.cancelledPackages)
+            assertFalse(cooldowns.isCoolingDown(context.packageName))
+
+            val completion = dao.completions.single()
+            assertEquals(InterventionOutcome.WALKED_AWAY, completion.outcome)
+            assertEquals("Check a message — DM Alex", completion.intention)
+            assertNull(completion.sessionLimitMinutes)
+            assertEquals(listOf(InterventionEffect.GoHome), effects)
+        }
+
+    @Test
+    fun `daily limit blocked stays locked, blocks continue, walks away cleanly, and survives process death`() =
+        runTest(dispatcher) {
+            val mutableClock = MutableClock(1_000_000L)
+            val dao = FakeInterventionLogDao()
+            val cooldowns = CooldownTracker(FakeTimeSource())
+            val sessionStarter = RecordingSessionStarter()
+            val handle = SavedStateHandle(
+                mapOf(
+                    PauseInterventionActivity.EXTRA_PACKAGE_NAME to context.packageName,
+                    PauseInterventionActivity.EXTRA_DAILY_LIMIT_BLOCKED to true,
+                    PauseInterventionActivity.EXTRA_DAILY_USED_MINUTES to 45,
+                    PauseInterventionActivity.EXTRA_DAILY_LIMIT_MINUTES to 30,
+                ),
+            )
+            val firstStore = ViewModelStore()
+            val first = attachToStore(
+                firstStore,
+                viewModel(
+                    manager = sessionStarter,
+                    modes = listOf(FrictionMode.BREATHING),
+                    savedStateHandle = handle,
+                    dao = dao,
+                    cooldownTracker = cooldowns,
+                    testClock = mutableClock,
+                ),
+            )
+            val firstEffects = collectEffects(first)
+
+            runCurrent()
+            assertTrue(first.uiState.value.isDailyLimitBlocked)
+            assertEquals(45, first.uiState.value.dailyUsedMinutes)
+            assertEquals(30, first.uiState.value.dailyLimitMinutes)
+            assertFalse(first.uiState.value.isUnlocked)
+            assertEquals(0L, first.uiState.value.remainingMillis)
+            assertNull(handle.get<Long>("pause_ends_at"))
+
+            // Advancing time never unlocks because no breathing timer runs.
+            mutableClock.advanceBy(60_000L)
+            advanceTimeBy(10_000L)
+            runCurrent()
+            assertFalse(first.uiState.value.isUnlocked)
+
+            // Mutating inputs or invoking continue cannot bypass the daily budget block.
+            first.selectReason("Check a message")
+            first.updateNote("Try to bypass")
+            first.selectSessionLimit(5)
+            first.continueToTargetApp()
+            runCurrent()
+            assertFalse(first.uiState.value.isUnlocked)
+            assertFalse(first.uiState.value.isCompleting)
+            assertTrue(firstEffects.isEmpty())
+            assertTrue(sessionStarter.started.isEmpty())
+            assertTrue(dao.completions.isEmpty())
+
+            // Simulate process death and activity recreation with the same SavedStateHandle.
+            firstStore.clear()
+
+            val restoredStore = ViewModelStore()
+            val restored = attachToStore(
+                restoredStore,
+                viewModel(
+                    manager = sessionStarter,
+                    modes = listOf(FrictionMode.BREATHING),
+                    savedStateHandle = handle,
+                    dao = dao,
+                    cooldownTracker = cooldowns,
+                    testClock = mutableClock,
+                ),
+            )
+            val restoredEffects = collectEffects(restored)
+            runCurrent()
+
+            assertTrue(restored.uiState.value.isDailyLimitBlocked)
+            assertEquals(45, restored.uiState.value.dailyUsedMinutes)
+            assertEquals(30, restored.uiState.value.dailyLimitMinutes)
+            assertFalse(restored.uiState.value.isUnlocked)
+            assertEquals(1, dao.inserted.size)
+
+            restored.continueToTargetApp()
+            runCurrent()
+            assertTrue(restoredEffects.isEmpty())
+            assertTrue(sessionStarter.started.isEmpty())
+
+            restored.walkAway()
+            runCurrent()
+            val completion = dao.completions.single()
+            assertEquals(InterventionOutcome.WALKED_AWAY, completion.outcome)
+            assertNull(completion.intention)
+            assertNull(completion.sessionLimitMinutes)
+            assertEquals(listOf(InterventionEffect.GoHome), restoredEffects)
+            restoredStore.clear()
+        }
+
+    @Test
+    fun `handleNewIntervention switches same package when daily limit blocked state changes`() =
+        runTest(dispatcher) {
+            val dao = FakeInterventionLogDao()
+            val sessionStarter = RecordingSessionStarter()
+            val handle = SavedStateHandle(
+                mapOf(
+                    PauseInterventionActivity.EXTRA_PACKAGE_NAME to context.packageName,
+                    PauseInterventionActivity.EXTRA_FRICTION_MODES to
+                        arrayListOf(FrictionMode.INTENTION.name),
+                ),
+            )
+            val vm = viewModel(
+                manager = sessionStarter,
+                modes = listOf(FrictionMode.INTENTION),
+                savedStateHandle = handle,
+                dao = dao,
+            )
+
+            runCurrent()
+            vm.selectReason("Check a message")
+            assertTrue(vm.uiState.value.isUnlocked)
+
+            // Same package now blocked by daily budget must replace the active pause.
+            vm.handleNewIntervention(
+                newPackageName = context.packageName,
+                newModes = listOf(FrictionMode.BREATHING),
+                dailyLimitBlocked = true,
+                dailyUsedMinutes = 30,
+                dailyLimitMinutes = 30,
+            )
+            runCurrent()
+
+            assertTrue(vm.uiState.value.isDailyLimitBlocked)
+            assertEquals(30, vm.uiState.value.dailyUsedMinutes)
+            assertEquals(30, vm.uiState.value.dailyLimitMinutes)
+            assertFalse(vm.uiState.value.isUnlocked)
+            assertNull(vm.uiState.value.selectedReason)
+            assertEquals(true, handle.get<Boolean>(PauseInterventionActivity.EXTRA_DAILY_LIMIT_BLOCKED))
+            assertEquals(30, handle.get<Int>(PauseInterventionActivity.EXTRA_DAILY_USED_MINUTES))
+            assertEquals(30, handle.get<Int>(PauseInterventionActivity.EXTRA_DAILY_LIMIT_MINUTES))
+            assertEquals(2, dao.inserted.size)
+            assertEquals(InterventionOutcome.WALKED_AWAY, dao.completions.single().outcome)
+
+            // Duplicate blocked intent for the same already-blocked package is ignored.
+            vm.handleNewIntervention(
+                newPackageName = context.packageName,
+                newModes = listOf(FrictionMode.BREATHING),
+                dailyLimitBlocked = true,
+                dailyUsedMinutes = 30,
+                dailyLimitMinutes = 30,
+            )
+            runCurrent()
+            assertEquals(2, dao.inserted.size)
+            assertEquals(1, dao.completions.size)
+        }
+
     private fun attachToStore(
         store: ViewModelStore,
         instance: InterventionViewModel,
@@ -516,7 +995,7 @@ class InterventionViewModelTest {
     )
 
     private fun TestScope.viewModel(
-        manager: SessionLimitManager,
+        manager: SessionStarter,
         modes: List<FrictionMode> = listOf(FrictionMode.TIME_LIMIT),
         savedStateHandle: SavedStateHandle = SavedStateHandle(
             mapOf(
@@ -671,5 +1150,33 @@ class InterventionViewModelTest {
 
     private class RecordingNotifier : SessionReminderSink {
         override fun show(appLabel: String) = Unit
+    }
+
+    private class RecordingSessionStarter : SessionStarter {
+        data class StartedSession(
+            val packageName: String,
+            val appLabel: String,
+            val limitMinutes: Int,
+            val attemptId: Long?,
+            val intention: String?,
+        )
+
+        val started = mutableListOf<StartedSession>()
+        val cancelledPackages = mutableListOf<String?>()
+
+        override suspend fun startSession(
+            packageName: String,
+            appLabel: String,
+            limitMinutes: Int,
+            attemptId: Long?,
+            intention: String?,
+        ): Result<Unit> {
+            started += StartedSession(packageName, appLabel, limitMinutes, attemptId, intention)
+            return Result.success(Unit)
+        }
+
+        override suspend fun cancelSession(packageName: String?) {
+            cancelledPackages += packageName
+        }
     }
 }

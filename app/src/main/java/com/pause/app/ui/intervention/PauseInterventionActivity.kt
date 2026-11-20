@@ -90,6 +90,9 @@ class PauseInterventionActivity : ComponentActivity() {
         viewModel.handleNewIntervention(
             newPackageName = extractPackageName(intent),
             newModes = extractModes(intent),
+            dailyLimitBlocked = extractDailyLimitBlocked(intent),
+            dailyUsedMinutes = extractDailyUsedMinutes(intent),
+            dailyLimitMinutes = extractDailyLimitMinutes(intent),
         )
     }
 
@@ -107,6 +110,9 @@ class PauseInterventionActivity : ComponentActivity() {
         const val EXTRA_PACKAGE_NAME = "com.pause.app.extra.PACKAGE_NAME"
         const val EXTRA_FRICTION_MODE = "com.pause.app.extra.FRICTION_MODE"
         const val EXTRA_FRICTION_MODES = "com.pause.app.extra.FRICTION_MODES"
+        const val EXTRA_DAILY_LIMIT_BLOCKED = "com.pause.app.extra.DAILY_LIMIT_BLOCKED"
+        const val EXTRA_DAILY_USED_MINUTES = "com.pause.app.extra.DAILY_USED_MINUTES"
+        const val EXTRA_DAILY_LIMIT_MINUTES = "com.pause.app.extra.DAILY_LIMIT_MINUTES"
 
         internal fun extractPackageName(intent: Intent): String =
             intent.getStringExtra(EXTRA_PACKAGE_NAME).orEmpty()
@@ -115,6 +121,15 @@ class PauseInterventionActivity : ComponentActivity() {
             encoded = intent.getStringArrayListExtra(EXTRA_FRICTION_MODES),
             legacy = intent.getStringExtra(EXTRA_FRICTION_MODE),
         )
+
+        internal fun extractDailyLimitBlocked(intent: Intent): Boolean =
+            intent.getBooleanExtra(EXTRA_DAILY_LIMIT_BLOCKED, false)
+
+        internal fun extractDailyUsedMinutes(intent: Intent): Int =
+            intent.getIntExtra(EXTRA_DAILY_USED_MINUTES, 0).coerceAtLeast(0)
+
+        internal fun extractDailyLimitMinutes(intent: Intent): Int =
+            intent.getIntExtra(EXTRA_DAILY_LIMIT_MINUTES, 0).coerceAtLeast(0)
 
         /** Builds the intent used by the accessibility service. */
         fun intent(context: Context, packageName: String, modes: List<FrictionMode>): Intent =
@@ -136,5 +151,23 @@ class PauseInterventionActivity : ComponentActivity() {
                     modes.firstOrNull()?.name ?: FrictionMode.BREATHING.name,
                 )
             }
+
+        /** Builds the intent shown when an app has reached its daily usage budget. */
+        fun budgetBlockedIntent(
+            context: Context,
+            packageName: String,
+            usedMinutes: Int,
+            limitMinutes: Int,
+        ): Intent = Intent(context, PauseInterventionActivity::class.java).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+            putExtra(EXTRA_PACKAGE_NAME, packageName)
+            putExtra(EXTRA_DAILY_LIMIT_BLOCKED, true)
+            putExtra(EXTRA_DAILY_USED_MINUTES, usedMinutes.coerceAtLeast(0))
+            putExtra(EXTRA_DAILY_LIMIT_MINUTES, limitMinutes.coerceAtLeast(0))
+        }
     }
 }

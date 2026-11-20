@@ -9,9 +9,12 @@ import android.view.accessibility.AccessibilityEvent
 import com.pause.app.BuildConfig
 import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.data.preferences.SettingsRepository
+import com.pause.app.data.repository.DailyBudgetRepository
+import com.pause.app.domain.model.DailyBudgetStatus
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.ui.intervention.PauseInterventionActivity
 import dagger.hilt.android.AndroidEntryPoint
+import java.time.Clock
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +62,12 @@ class PauseAccessibilityService : AccessibilityService() {
 
     @Inject
     lateinit var sessionReminderNotifier: SessionReminderNotifier
+
+    @Inject
+    lateinit var clock: Clock
+
+    @Inject
+    lateinit var dailyBudgetRepository: DailyBudgetRepository
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -125,23 +134,47 @@ class PauseAccessibilityService : AccessibilityService() {
         }
         val packageName = event.packageName?.toString() ?: return
         val settings = settingsRepository.settings.value
+        val nowZdt = clock.instant().atZone(clock.zone)
+        val effective = settings.effectiveAt(nowZdt)
+
+        var budgetStatus: DailyBudgetStatus? = null
+        if (settings.isEnabled && packageName !in ignoredPackages && effective.isMonitored(packageName)) {
+            val dailyLimit = effective.dailyLimitMinutesFor(packageName)
+            if (dailyLimit != null) {
+                budgetStatus = dailyBudgetRepository.checkBudgetSync(packageName, dailyLimit)
+                serviceScope.launch {
+                    runCatching {
+                        dailyBudgetRepository.checkAndPersistBudget(packageName, dailyLimit)
+                    }
+                }
+            }
+        }
 
         // The gate owns the whole decision: master switch, monitoring, ignore
-        // list, lock/screen-off, duplicate-event debounce and cooldowns.
+        // list, lock/screen-off, daily budget, duplicate-event debounce and cooldowns.
         val decision = interceptionGate.decide(
             packageName = packageName,
             settings = settings,
             ignoredPackages = ignoredPackages,
             isDeviceInteractive = powerManager?.isInteractive == true,
             isDeviceLocked = keyguardManager?.isKeyguardLocked == true,
+            isDailyLimitExceeded = budgetStatus?.isExceeded == true,
         )
-        if (decision != InterceptionDecision.INTERCEPT) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "skip $packageName: $decision")
-            return
-        }
-        if (BuildConfig.DEBUG) Log.d(TAG, "intercept $packageName")
+        when (decision) {
+            InterceptionDecision.INTERCEPT -> {
+                if (BuildConfig.DEBUG) Log.d(TAG, "intercept $packageName")
+                launchIntervention(packageName, effective.frictionModesFor(packageName))
+            }
 
-        launchIntervention(packageName, settings.frictionModesFor(packageName))
+            InterceptionDecision.DAILY_LIMIT_EXCEEDED -> {
+                if (BuildConfig.DEBUG) Log.d(TAG, "daily limit exceeded for $packageName")
+                launchBudgetBlocked(packageName, budgetStatus)
+            }
+
+            else -> {
+                if (BuildConfig.DEBUG) Log.d(TAG, "skip $packageName: $decision")
+            }
+        }
     }
 
     private fun launchIntervention(packageName: String, modes: List<FrictionMode>) {
@@ -152,6 +185,20 @@ class PauseAccessibilityService : AccessibilityService() {
                 // because "Display over other apps" was never granted) let the
                 // next real app launch try again instead of blocking for minutes.
                 if (BuildConfig.DEBUG) Log.d(TAG, "launch failed for $packageName", it)
+                interceptionGate.onLaunchFailed(packageName)
+            }
+    }
+
+    private fun launchBudgetBlocked(packageName: String, budgetStatus: DailyBudgetStatus?) {
+        val intent = PauseInterventionActivity.budgetBlockedIntent(
+            context = this,
+            packageName = packageName,
+            usedMinutes = budgetStatus?.usedMinutes ?: 0,
+            limitMinutes = budgetStatus?.limitMinutes ?: 0,
+        )
+        runCatching { startActivity(intent) }
+            .onFailure {
+                if (BuildConfig.DEBUG) Log.d(TAG, "budget-blocked launch failed for $packageName", it)
                 interceptionGate.onLaunchFailed(packageName)
             }
     }
@@ -177,12 +224,13 @@ class PauseAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Returns the package filter to register with the framework. When Pause is
-     * switched off globally, return an empty set so the framework does not wake
-     * the service for monitored apps only for [InterceptionGate] to drop them.
+     * Returns the package filter to register with the framework. Includes
+     * scheduled profiles when auto-switching is enabled, and returns an empty
+     * set when Pause is switched off globally so the framework does not wake
+     * the service unnecessarily.
      */
     private fun activePackageFilter(settings: PauseSettings): Set<String> =
-        if (settings.isEnabled) settings.effectiveMonitoredPackages else emptySet()
+        settings.allAccessibleMonitoredPackages
 
     /**
      * Applies the runtime package filter. An empty selection is replaced with

@@ -117,18 +117,25 @@ fun InterventionScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    when (state.mode) {
-                        FrictionMode.BREATHING -> BreathingContent(state = state)
-                        FrictionMode.INTENTION -> IntentionContent(
+                    if (state.isDailyLimitBlocked) {
+                        DailyLimitBlockedContent(
                             state = state,
-                            onReasonSelected = onReasonSelected,
-                            onNoteChanged = onNoteChanged,
+                            appName = appName,
                         )
+                    } else {
+                        when (state.mode) {
+                            FrictionMode.BREATHING -> BreathingContent(state = state)
+                            FrictionMode.INTENTION -> IntentionContent(
+                                state = state,
+                                onReasonSelected = onReasonSelected,
+                                onNoteChanged = onNoteChanged,
+                            )
 
-                        FrictionMode.TIME_LIMIT -> TimeLimitContent(
-                            state = state,
-                            onLimitSelected = onLimitSelected,
-                        )
+                            FrictionMode.TIME_LIMIT -> TimeLimitContent(
+                                state = state,
+                                onLimitSelected = onLimitSelected,
+                            )
+                        }
                     }
                 }
             }
@@ -142,7 +149,7 @@ fun InterventionScreen(
         }
     }
 
-    if (state.sessionStartError) {
+    if (!state.isDailyLimitBlocked && state.sessionStartError) {
         AlertDialog(
             onDismissRequest = onDismissSessionStartError,
             title = { Text(stringResource(R.string.session_start_error_title)) },
@@ -190,7 +197,7 @@ private fun PauseHeader(state: InterventionUiState, appName: String) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (state.modeCount > 1) {
+            if (!state.isDailyLimitBlocked && state.modeCount > 1) {
                 Text(
                     text = stringResource(
                         R.string.intervention_step,
@@ -214,6 +221,7 @@ private fun PauseActions(
 ) {
     val hint = when {
         state.isCompleting -> stringResource(R.string.hint_working)
+        state.isDailyLimitBlocked -> null
         state.hasNextStep && state.isUnlocked -> stringResource(R.string.hint_next_step)
         !state.isUnlocked && state.mode == FrictionMode.BREATHING ->
             stringResource(R.string.hint_breathing_locked, state.remainingSeconds)
@@ -247,36 +255,38 @@ private fun PauseActions(
             )
         }
 
-        // Secondary action: continue into the app (unlocked by the pause).
-        OutlinedButton(
-            onClick = onContinue,
-            enabled = state.isUnlocked && !state.isCompleting,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 56.dp),
-            shape = MaterialTheme.shapes.medium,
-            border = BorderStroke(
-                width = 1.dp,
-                color = if (state.isUnlocked && !state.isCompleting) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.outlineVariant
-                },
-            ),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.primary,
-                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            ),
-        ) {
-            Text(
-                text = if (state.hasNextStep) {
-                    stringResource(R.string.continue_next)
-                } else {
-                    stringResource(R.string.continue_to_app, appName)
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        if (!state.isDailyLimitBlocked) {
+            // Secondary action: continue into the app (unlocked by the pause).
+            OutlinedButton(
+                onClick = onContinue,
+                enabled = state.isUnlocked && !state.isCompleting,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp),
+                shape = MaterialTheme.shapes.medium,
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (state.isUnlocked && !state.isCompleting) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant
+                    },
+                ),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            ) {
+                Text(
+                    text = if (state.hasNextStep) {
+                        stringResource(R.string.continue_next)
+                    } else {
+                        stringResource(R.string.continue_to_app, appName)
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         // Primary action: walk away and go home.
@@ -295,6 +305,59 @@ private fun PauseActions(
             ),
         ) {
             Text(stringResource(R.string.close_and_leave))
+        }
+    }
+}
+
+@Composable
+private fun DailyLimitBlockedContent(
+    state: InterventionUiState,
+    appName: String,
+) {
+    val usageBody = if (state.dailyLimitMinutes > 0) {
+        stringResource(
+            R.string.budget_blocked_usage,
+            state.dailyUsedMinutes,
+            state.dailyLimitMinutes,
+            appName,
+        )
+    } else {
+        stringResource(R.string.budget_blocked_usage_generic, appName)
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = stringResource(R.string.budget_blocked_title),
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(PauseDimens.space16))
+        Text(
+            text = usageBody,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(PauseDimens.space24))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Text(
+                text = stringResource(R.string.budget_blocked_resets),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(PauseDimens.space16),
+            )
         }
     }
 }

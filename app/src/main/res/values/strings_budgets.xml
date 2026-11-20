@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="budget_blocked_title">Daily limit reached</string>
+    <string name="budget_blocked_usage">You\'ve used %1$d of %2$d minutes on %3$s today.</string>
+    <string name="budget_blocked_usage_generic">You\'ve reached your daily limit on %1$s today.</string>
+    <string name="budget_blocked_resets">Your daily limit resets at midnight.</string>
+</resources>

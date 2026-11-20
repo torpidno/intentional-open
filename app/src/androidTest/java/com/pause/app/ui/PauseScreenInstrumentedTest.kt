@@ -11,6 +11,7 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.InterventionOutcome
 import com.pause.app.testing.PauseTestEntryPoint
 import com.pause.app.testing.Shell
 import com.pause.app.testing.TEST_TARGET_PACKAGE
@@ -26,6 +27,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -132,6 +134,78 @@ class PauseScreenInstrumentedTest {
         )
     }
 
+    @Test
+    fun twoStepPauseAdvancesFromIntentionToSessionLimit() {
+        val intent = Intent(context, PauseInterventionActivity::class.java).apply {
+            putExtra(PauseInterventionActivity.EXTRA_PACKAGE_NAME, TEST_TARGET_PACKAGE)
+            putStringArrayListExtra(
+                PauseInterventionActivity.EXTRA_FRICTION_MODES,
+                arrayListOf(FrictionMode.INTENTION.name, FrictionMode.TIME_LIMIT.name),
+            )
+        }
+        scenario = ActivityScenario.launch(intent)
+        assertNotNull(
+            "Pause screen did not appear for 2-step sequence",
+            device.wait(Until.findObject(By.text(PAUSING)), 20_000L),
+        )
+
+        assertNotNull(
+            "Step 1 of 2 indicator missing",
+            device.wait(Until.findObject(By.text("Step 1 of 2")), 10_000L),
+        )
+        val nextAction = requireNotNull(
+            device.wait(Until.findObject(By.text(NEXT_LABEL)), 10_000L),
+        ) { "Next CTA was not rendered on step 1" }
+
+        // Locked Next must not advance past step 1 before an intention is chosen.
+        nextAction.click()
+        SystemClock.sleep(500L)
+        assertNotNull(
+            "Next advanced past step 1 before an intention was chosen",
+            device.findObject(By.text("Step 1 of 2")),
+        )
+        assertNull(
+            "Step 2 appeared before an intention was chosen",
+            device.findObject(By.text("Step 2 of 2")),
+        )
+
+        clickText("Check a message")
+        clickText(NEXT_LABEL)
+
+        assertNotNull(
+            "Step 2 of 2 did not appear after advancing from intention",
+            device.wait(Until.findObject(By.text("Step 2 of 2")), 10_000L),
+        )
+        assertNotNull(
+            "Continue CTA did not appear on step 2",
+            device.wait(Until.findObject(By.text(CONTINUE_LABEL)), 10_000L),
+        )
+
+        clickText("5 minutes")
+        clickText(CONTINUE_LABEL)
+
+        assertTrue(
+            "Pause did not close after completing both steps",
+            device.wait(Until.gone(By.text(PAUSING)), 15_000L),
+        )
+
+        val record = runBlocking {
+            withTimeout(10_000L) {
+                entryPoint.interceptionRepository().observeHistory(limit = 10)
+                    .first { rows -> rows.any { it.outcome == InterventionOutcome.PROCEEDED } }
+                    .first { it.outcome == InterventionOutcome.PROCEEDED }
+            }
+        }
+        assertEquals(TEST_TARGET_PACKAGE, record.packageName)
+        assertEquals(InterventionOutcome.PROCEEDED, record.outcome)
+        assertEquals(
+            listOf(FrictionMode.INTENTION, FrictionMode.TIME_LIMIT),
+            record.frictionModes,
+        )
+        assertEquals("Check a message", record.intention)
+        assertEquals(5, record.sessionLimitMinutes)
+    }
+
     private fun clickText(text: String) {
         // findObject() is a single snapshot; a slower emulator can still be
         // composing the step right after the previous click.
@@ -180,6 +254,7 @@ class PauseScreenInstrumentedTest {
 
     private companion object {
         const val PAUSING = "PAUSING"
+        const val NEXT_LABEL = "Next"
         const val CONTINUE_LABEL = "Continue to $TEST_TARGET_PACKAGE"
         const val CLOSE_LABEL = "Close & do something else"
     }
