@@ -1,6 +1,9 @@
 package com.pause.app.data.preferences
 
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.PauseProfile
+import com.pause.app.domain.model.StrictModeChallenge
+import com.pause.app.domain.model.isWithinScheduleWindow
 import java.time.DayOfWeek
 import java.time.ZonedDateTime
 
@@ -32,6 +35,19 @@ data class PauseSettings(
     val snoozedUntilMillis: Map<String, Long> = emptyMap(),
     /** Days of history to retain; 0 keeps history forever. */
     val historyRetentionDays: Int = DEFAULT_HISTORY_RETENTION_DAYS,
+    /** Optional per-app daily usage budgets, in positive minutes. */
+    val dailyLimitsMinutes: Map<String, Int> = emptyMap(),
+    /** Saved configuration profiles (Work, Evening, Weekend, custom). */
+    val profiles: List<PauseProfile> = emptyList(),
+    /** Currently selected manual profile id, or null when unlinked. */
+    val activeProfileId: String? = null,
+    /** When true, scheduled profiles take effect automatically during their window. */
+    val autoSwitchProfiles: Boolean = false,
+    /** When true, weakening protections requires completing a brief challenge. */
+    val strictModeEnabled: Boolean = false,
+    val strictModeChallenge: StrictModeChallenge = StrictModeChallenge.DELAY,
+    val strictModeDelaySeconds: Int = DEFAULT_STRICT_MODE_DELAY_SECONDS,
+    val strictModePhrase: String = DEFAULT_STRICT_MODE_PHRASE,
 ) {
     /** True when the app is selected and not switched off indefinitely. */
     fun isMonitored(packageName: String): Boolean =
@@ -49,18 +65,12 @@ data class PauseSettings(
      */
     fun isScheduleActive(now: ZonedDateTime): Boolean {
         if (!scheduleEnabled) return true
-        if (scheduleDays.isEmpty()) return false
-
-        val minuteOfDay = now.hour * 60 + now.minute
-        val start = scheduleStartMinutes.coerceIn(0, MINUTES_PER_DAY - 1)
-        val end = scheduleEndMinutes.coerceIn(0, MINUTES_PER_DAY - 1)
-        return when {
-            start == end -> now.dayOfWeek in scheduleDays
-            start < end -> now.dayOfWeek in scheduleDays && minuteOfDay in start until end
-            minuteOfDay >= start -> now.dayOfWeek in scheduleDays
-            minuteOfDay < end -> now.dayOfWeek.minus(1) in scheduleDays
-            else -> false
-        }
+        return isWithinScheduleWindow(
+            now = now,
+            scheduleDays = scheduleDays,
+            scheduleStartMinutes = scheduleStartMinutes,
+            scheduleEndMinutes = scheduleEndMinutes,
+        )
     }
 
     /**
@@ -77,9 +87,68 @@ data class PauseSettings(
     fun frictionModeFor(packageName: String): FrictionMode =
         frictionModesFor(packageName).first()
 
+    /** Optional daily usage limit for [packageName] in minutes, or null when unset. */
+    fun dailyLimitMinutesFor(packageName: String): Int? =
+        dailyLimitsMinutes[packageName]?.takeIf { it > 0 }
+
+    /** Currently selected profile, if [activeProfileId] matches a saved profile. */
+    val activeProfile: PauseProfile?
+        get() = activeProfileId?.let { id -> profiles.firstOrNull { it.id == id } }
+
+    /**
+     * First scheduled profile whose active window matches [now] when
+     * [autoSwitchProfiles] is enabled; null otherwise.
+     */
+    fun scheduledProfileAt(now: ZonedDateTime): PauseProfile? =
+        if (!autoSwitchProfiles) {
+            null
+        } else {
+            profiles.firstOrNull { it.scheduleEnabled && it.isScheduleActive(now) }
+        }
+
+    /**
+     * Resolves the settings active at [now], overlaying any matching scheduled
+     * profile when [autoSwitchProfiles] is enabled.
+     */
+    fun effectiveAt(now: ZonedDateTime): PauseSettings {
+        val matched = scheduledProfileAt(now) ?: return this
+        return copy(
+            activeProfileId = matched.id,
+            monitoredPackages = matched.monitoredPackages,
+            pausedPackages = matched.pausedPackages,
+            defaultFrictionModes = matched.defaultFrictionModes
+                .distinct()
+                .ifEmpty { listOf(FrictionMode.BREATHING) },
+            appModeOverrides = matched.appModeOverrides,
+            scheduleEnabled = true,
+            scheduleDays = matched.scheduleDays,
+            scheduleStartMinutes = matched.scheduleStartMinutes,
+            scheduleEndMinutes = matched.scheduleEndMinutes,
+        )
+    }
+
     /** Package filter applied to the accessibility service (paused apps removed). */
     val effectiveMonitoredPackages: Set<String>
         get() = monitoredPackages - pausedPackages
+
+    /**
+     * Complete set of packages the accessibility service should listen for,
+     * including any scheduled profiles when [autoSwitchProfiles] is enabled.
+     */
+    val allAccessibleMonitoredPackages: Set<String>
+        get() = when {
+            !isEnabled -> emptySet()
+            autoSwitchProfiles ->
+                effectiveMonitoredPackages +
+                    profiles
+                        .filter { it.scheduleEnabled }
+                        .flatMap { it.effectiveMonitoredPackages }
+            else -> effectiveMonitoredPackages
+        }
+
+    /** Non-blank confirmation phrase used for [StrictModeChallenge.PHRASE]. */
+    val effectiveStrictModePhrase: String
+        get() = strictModePhrase.trim().ifEmpty { DEFAULT_STRICT_MODE_PHRASE }
 
     companion object {
         const val DEFAULT_COOLDOWN_MINUTES = 5
@@ -91,9 +160,17 @@ data class PauseSettings(
         const val DEFAULT_HISTORY_RETENTION_DAYS = 0
         const val MINUTES_PER_DAY = 24 * 60
 
+        const val DEFAULT_STRICT_MODE_DELAY_SECONDS = 15
+        const val DEFAULT_STRICT_MODE_PHRASE = "I choose to change this"
+        const val MAX_STRICT_MODE_PHRASE_LENGTH = 80
+        const val MIN_STRICT_MODE_DELAY_SECONDS = 5
+        const val MAX_STRICT_MODE_DELAY_SECONDS = 300
+
         val COOLDOWN_OPTIONS = listOf(5, 10, 15)
         val BREATHING_OPTIONS = listOf(3, 5, 10)
         val SESSION_LIMIT_OPTIONS = listOf(5, 15, 30)
         val HISTORY_RETENTION_OPTIONS = listOf(30, 90, 0)
+        val DAILY_LIMIT_OPTIONS = listOf(15, 30, 45, 60, 90, 120)
+        val STRICT_MODE_DELAY_OPTIONS = listOf(15, 30, 60)
     }
 }

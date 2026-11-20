@@ -2,8 +2,10 @@ package com.pause.app.service
 
 import com.pause.app.data.preferences.PauseSettings
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.PauseProfile
 import com.pause.app.util.FakeTimeSource
 import java.time.Clock
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
@@ -176,12 +178,180 @@ class InterceptionGateTest {
         )
     }
 
+    @Test
+    fun `auto-switched scheduled profile overrides monitored apps during its window`() {
+        val workProfile = PauseProfile.workPreset(monitoredPackages = setOf(TIKTOK))
+        val settings = pauseSettings(monitored = setOf(INSTAGRAM)).copy(
+            profiles = listOf(workProfile),
+            autoSwitchProfiles = true,
+        )
+
+        // Monday 10:00 -> Work profile is active (monitors TIKTOK, not INSTAGRAM).
+        val duringWork = gateAt(dayAt(DayOfWeek.MONDAY, hour = 10))
+        assertEquals(
+            InterceptionDecision.INTERCEPT,
+            decide(packageName = TIKTOK, settings = settings, gate = duringWork),
+        )
+        assertEquals(
+            InterceptionDecision.NOT_MONITORED,
+            decide(packageName = INSTAGRAM, settings = settings, gate = duringWork),
+        )
+
+        // Monday 19:00 -> outside Work window, falls back to base settings (INSTAGRAM).
+        val afterWork = gateAt(dayAt(DayOfWeek.MONDAY, hour = 19))
+        assertEquals(
+            InterceptionDecision.INTERCEPT,
+            decide(packageName = INSTAGRAM, settings = settings, gate = afterWork),
+        )
+        assertEquals(
+            InterceptionDecision.NOT_MONITORED,
+            decide(packageName = TIKTOK, settings = settings, gate = afterWork),
+        )
+
+        // Master switch off still wins even during an active scheduled profile.
+        assertEquals(
+            InterceptionDecision.DISABLED,
+            decide(
+                packageName = TIKTOK,
+                settings = settings.copy(isEnabled = false),
+                gate = duringWork,
+            ),
+        )
+    }
+
+    @Test
+    fun `overnight scheduled profile remains active past midnight on the next morning`() {
+        val nightProfile = PauseProfile(
+            id = "night",
+            name = "Night",
+            monitoredPackages = setOf(TIKTOK),
+            scheduleEnabled = true,
+            scheduleDays = setOf(DayOfWeek.SUNDAY),
+            scheduleStartMinutes = 22 * 60,
+            scheduleEndMinutes = 6 * 60,
+        )
+        val settings = pauseSettings(monitored = emptySet()).copy(
+            profiles = listOf(nightProfile),
+            autoSwitchProfiles = true,
+        )
+
+        assertEquals(
+            InterceptionDecision.INTERCEPT,
+            decide(
+                packageName = TIKTOK,
+                settings = settings,
+                gate = gateAt(dayAt(DayOfWeek.MONDAY, hour = 2)),
+            ),
+        )
+        assertEquals(
+            InterceptionDecision.NOT_MONITORED,
+            decide(
+                packageName = TIKTOK,
+                settings = settings,
+                gate = gateAt(dayAt(DayOfWeek.MONDAY, hour = 6)),
+            ),
+        )
+    }
+
+    @Test
+    fun `daily limit exceeded bypasses normal cooldown grace period`() {
+        cooldownTracker.setCooldown(INSTAGRAM, 5 * 60_000L)
+
+        assertEquals(
+            InterceptionDecision.COOLING_DOWN,
+            decide(isDailyLimitExceeded = false),
+        )
+        assertEquals(
+            InterceptionDecision.DAILY_LIMIT_EXCEEDED,
+            decide(isDailyLimitExceeded = true),
+        )
+    }
+
+    @Test
+    fun `daily limit exceeded absorbs splash bursts with launch guard and recovers on failure`() {
+        assertEquals(
+            InterceptionDecision.DAILY_LIMIT_EXCEEDED,
+            decide(isDailyLimitExceeded = true),
+        )
+
+        // Inside debounce window -> DUPLICATE_EVENT.
+        time.advanceBy(500L)
+        assertEquals(
+            InterceptionDecision.DUPLICATE_EVENT,
+            decide(isDailyLimitExceeded = true),
+        )
+
+        // Past debounce window, still inside launch guard -> DUPLICATE_EVENT.
+        time.advanceBy(InterceptionGate.EVENT_DEBOUNCE_MS)
+        assertEquals(
+            InterceptionDecision.DUPLICATE_EVENT,
+            decide(isDailyLimitExceeded = true),
+        )
+
+        // Another package is unaffected by INSTAGRAM's budget launch guard.
+        val both = pauseSettings(monitored = setOf(INSTAGRAM, TIKTOK))
+        assertEquals(
+            InterceptionDecision.DAILY_LIMIT_EXCEEDED,
+            decide(packageName = TIKTOK, settings = both, isDailyLimitExceeded = true),
+        )
+
+        // After LAUNCH_GUARD_MS elapses, budget block triggers again.
+        time.advanceBy(InterceptionGate.LAUNCH_GUARD_MS)
+        assertEquals(
+            InterceptionDecision.DAILY_LIMIT_EXCEEDED,
+            decide(packageName = INSTAGRAM, settings = both, isDailyLimitExceeded = true),
+        )
+
+        // onLaunchFailed for another package does NOT clear INSTAGRAM's budget launch guard.
+        gate.onLaunchFailed(TIKTOK)
+        time.advanceBy(InterceptionGate.EVENT_DEBOUNCE_MS)
+        assertEquals(
+            InterceptionDecision.DUPLICATE_EVENT,
+            decide(packageName = INSTAGRAM, settings = both, isDailyLimitExceeded = true),
+        )
+
+        // onLaunchFailed for INSTAGRAM clears its budget launch guard immediately.
+        gate.onLaunchFailed(INSTAGRAM)
+        assertEquals(
+            InterceptionDecision.DAILY_LIMIT_EXCEEDED,
+            decide(packageName = INSTAGRAM, settings = both, isDailyLimitExceeded = true),
+        )
+    }
+
+    @Test
+    fun `daily limit exceeded still respects ignored, disabled, unmonitored, snoozed, and locked`() {
+        assertEquals(
+            InterceptionDecision.IGNORED_PACKAGE,
+            decide(ignoredPackages = setOf(INSTAGRAM), isDailyLimitExceeded = true),
+        )
+        assertEquals(
+            InterceptionDecision.DISABLED,
+            decide(settings = pauseSettings(enabled = false), isDailyLimitExceeded = true),
+        )
+        assertEquals(
+            InterceptionDecision.NOT_MONITORED,
+            decide(settings = pauseSettings(monitored = setOf(TIKTOK)), isDailyLimitExceeded = true),
+        )
+        assertEquals(
+            InterceptionDecision.DEVICE_UNAVAILABLE,
+            decide(isDeviceLocked = true, isDailyLimitExceeded = true),
+        )
+
+        val now = 1_000_000L
+        val snoozed = pauseSettings().copy(snoozedUntilMillis = mapOf(INSTAGRAM to now + 5_000L))
+        assertEquals(
+            InterceptionDecision.SNOOZED,
+            decide(settings = snoozed, gate = gateAt(now), isDailyLimitExceeded = true),
+        )
+    }
+
     private fun decide(
         packageName: String = INSTAGRAM,
         settings: PauseSettings = pauseSettings(),
         ignoredPackages: Set<String> = emptySet(),
         isDeviceInteractive: Boolean = true,
         isDeviceLocked: Boolean = false,
+        isDailyLimitExceeded: Boolean = false,
         gate: InterceptionGate = this.gate,
     ): InterceptionDecision = gate.decide(
         packageName = packageName,
@@ -189,6 +359,7 @@ class InterceptionGateTest {
         ignoredPackages = ignoredPackages,
         isDeviceInteractive = isDeviceInteractive,
         isDeviceLocked = isDeviceLocked,
+        isDailyLimitExceeded = isDailyLimitExceeded,
     )
 
     private fun gateAt(nowMillis: Long): InterceptionGate =
@@ -198,10 +369,15 @@ class InterceptionGateTest {
             clock = Clock.fixed(Instant.ofEpochMilli(nowMillis), ZoneOffset.UTC),
         )
 
-    private fun mondayAt(hour: Int): Long =
-        ZonedDateTime.of(2026, 11, 16, hour, 0, 0, 0, ZoneOffset.UTC)
+    private fun mondayAt(hour: Int): Long = dayAt(DayOfWeek.MONDAY, hour)
+
+    private fun dayAt(day: DayOfWeek, hour: Int): Long {
+        // 2026-11-16 is a Monday.
+        val dayOfMonth = 16 + (day.value - DayOfWeek.MONDAY.value)
+        return ZonedDateTime.of(2026, 11, dayOfMonth, hour, 0, 0, 0, ZoneOffset.UTC)
             .toInstant()
             .toEpochMilli()
+    }
 
     private fun pauseSettings(
         enabled: Boolean = true,

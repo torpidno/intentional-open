@@ -2,12 +2,14 @@ package com.pause.app.util
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationManagerCompat
@@ -16,21 +18,24 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The four setup steps shown during onboarding. */
+/** Permissions Pause uses: four core setup steps plus optional Usage Access. */
 enum class PermissionType {
     ACCESSIBILITY,
     OVERLAY,
     BATTERY_OPTIMIZATION,
     NOTIFICATIONS,
+    USAGE_ACCESS,
 }
 
-/** A point-in-time snapshot of the permissions Pause needs. */
+/** A point-in-time snapshot of the permissions Pause checks. */
 data class PermissionSnapshot(
     val accessibilityGranted: Boolean = false,
     val overlayGranted: Boolean = false,
     val batteryOptimizationIgnored: Boolean = false,
     val notificationsGranted: Boolean = false,
+    val usageAccessGranted: Boolean = false,
 ) {
+    /** True when all four core permissions are granted; Usage Access is optional. */
     val allGranted: Boolean
         get() = accessibilityGranted &&
             overlayGranted &&
@@ -66,6 +71,7 @@ class PermissionChecker @Inject constructor(
         overlayGranted = Settings.canDrawOverlays(context),
         batteryOptimizationIgnored = isIgnoringBatteryOptimizations(),
         notificationsGranted = areNotificationsGranted(),
+        usageAccessGranted = isUsageAccessGranted(),
     )
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -93,6 +99,26 @@ class PermissionChecker @Inject constructor(
         return true
     }
 
+    private fun isUsageAccessGranted(): Boolean {
+        val appOps = context.getSystemService(AppOpsManager::class.java) ?: return false
+        val uid = Process.myUid()
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                uid,
+                context.packageName,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                uid,
+                context.packageName,
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
     /** Intent that jumps straight to the relevant system settings screen. */
     fun settingsIntent(type: PermissionType): Intent {
         val intent = when (type) {
@@ -114,6 +140,9 @@ class PermissionChecker @Inject constructor(
             PermissionType.NOTIFICATIONS ->
                 Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                     .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+
+            PermissionType.USAGE_ACCESS ->
+                Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
         }
         return intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }

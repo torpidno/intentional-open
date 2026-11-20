@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.PauseProfile
+import com.pause.app.domain.model.StrictModeChallenge
 import java.io.File
 import java.time.Clock
 import java.time.DayOfWeek
@@ -18,6 +20,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -313,6 +316,210 @@ class SettingsRepositoryTest {
             val toggledOff = repository.settings.first { "com.target" !in it.monitoredPackages }
             assertEquals(mapOf("com.keep" to 1_600_000L), toggledOff.snoozedUntilMillis)
         }
+
+    @Test
+    fun `daily limits persist, update, and clear cleanly`() = runTest {
+        val (dataStore, repository) = createRepository()
+        repository.setDailyLimitMinutes("com.instagram.android", 30)
+        repository.setDailyLimitMinutes("com.zhiliaoapp.musically", 60)
+        repository.setDailyLimitMinutes("   ", 15)
+
+        val saved = repository.settings.first { it.dailyLimitsMinutes.size == 2 }
+        assertEquals(
+            mapOf("com.instagram.android" to 30, "com.zhiliaoapp.musically" to 60),
+            saved.dailyLimitsMinutes,
+        )
+        assertEquals(
+            "com.instagram.android=30|com.zhiliaoapp.musically=60",
+            dataStore.data.first()[stringPreferencesKey("daily_limits_minutes")],
+        )
+
+        repository.setDailyLimitMinutes("com.instagram.android", 0)
+        val afterZero = repository.settings.first { "com.instagram.android" !in it.dailyLimitsMinutes }
+        assertEquals(mapOf("com.zhiliaoapp.musically" to 60), afterZero.dailyLimitsMinutes)
+
+        repository.setDailyLimitMinutes("com.zhiliaoapp.musically", null)
+        val afterClear = repository.settings.first { it.dailyLimitsMinutes.isEmpty() }
+        assertEquals(emptyMap<String, Int>(), afterClear.dailyLimitsMinutes)
+    }
+
+    @Test
+    fun `profiles save, activate, switch atomically, and preserve edits across switches`() = runTest {
+        val (_, repository) = createRepository()
+        val work = PauseProfile.workPreset(
+            id = "work",
+            monitoredPackages = setOf("com.instagram.android"),
+            name = "Work \"Deep\" | Focus",
+        )
+        val evening = PauseProfile.eveningPreset(
+            id = "evening",
+            monitoredPackages = setOf("com.zhiliaoapp.musically"),
+        )
+
+        // Blank id or name is ignored.
+        repository.saveProfile(PauseProfile(id = " ", name = "Invalid"), activate = true)
+        repository.saveProfile(PauseProfile(id = "no-name", name = "  "), activate = true)
+
+        repository.saveProfile(work, activate = true)
+        repository.saveProfile(evening, activate = false)
+
+        val activeWork = repository.settings.first {
+            it.activeProfileId == "work" && it.profiles.size == 2
+        }
+        assertEquals(setOf("com.instagram.android"), activeWork.monitoredPackages)
+        assertEquals(
+            listOf(FrictionMode.BREATHING, FrictionMode.INTENTION),
+            activeWork.defaultFrictionModes,
+        )
+        assertTrue(activeWork.scheduleEnabled)
+        assertEquals(9 * 60, activeWork.scheduleStartMinutes)
+        assertEquals(17 * 60, activeWork.scheduleEndMinutes)
+
+        // Mutate top-level bundle settings while "work" is active -> synced into "work" atomically.
+        repository.setMonitored("com.reddit.frontpage", monitored = true)
+        repository.setAppPaused("com.instagram.android", paused = true)
+        repository.setAppModeOverrides("com.reddit.frontpage", listOf(FrictionMode.TIME_LIMIT))
+        repository.moveDefaultFrictionMode(FrictionMode.INTENTION, -1)
+        repository.setScheduleWindow(startMinutes = 8 * 60, endMinutes = 16 * 60)
+        repository.toggleScheduleDay(DayOfWeek.FRIDAY)
+
+        val synced = repository.settings.first {
+            it.activeProfile?.monitoredPackages ==
+                setOf("com.instagram.android", "com.reddit.frontpage") &&
+                it.activeProfile?.pausedPackages == setOf("com.instagram.android") &&
+                it.activeProfile?.defaultFrictionModes ==
+                listOf(FrictionMode.INTENTION, FrictionMode.BREATHING) &&
+                it.activeProfile?.scheduleStartMinutes == 8 * 60 &&
+                DayOfWeek.FRIDAY !in it.activeProfile?.scheduleDays.orEmpty()
+        }
+        assertEquals(
+            mapOf("com.reddit.frontpage" to listOf(FrictionMode.TIME_LIMIT)),
+            synced.activeProfile?.appModeOverrides,
+        )
+
+        // Switch to "evening" -> top-level switches to evening, while "work" keeps its edits.
+        repository.selectProfile("evening")
+        val onEvening = repository.settings.first { it.activeProfileId == "evening" }
+        assertEquals(setOf("com.zhiliaoapp.musically"), onEvening.monitoredPackages)
+        assertEquals(emptySet<String>(), onEvening.pausedPackages)
+        assertEquals(
+            listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT),
+            onEvening.defaultFrictionModes,
+        )
+        assertEquals(20 * 60, onEvening.scheduleStartMinutes)
+
+        // Switch back to "work" -> all prior edits return intact.
+        repository.selectProfile("work")
+        val backOnWork = repository.settings.first { it.activeProfileId == "work" }
+        assertEquals(
+            setOf("com.instagram.android", "com.reddit.frontpage"),
+            backOnWork.monitoredPackages,
+        )
+        assertEquals(setOf("com.instagram.android"), backOnWork.pausedPackages)
+        assertEquals(
+            listOf(FrictionMode.INTENTION, FrictionMode.BREATHING),
+            backOnWork.defaultFrictionModes,
+        )
+        assertEquals(8 * 60, backOnWork.scheduleStartMinutes)
+        assertEquals(16 * 60, backOnWork.scheduleEndMinutes)
+        assertFalse(DayOfWeek.FRIDAY in backOnWork.scheduleDays)
+
+        // Unlinking active profile keeps current top-level settings intact.
+        repository.selectProfile(null)
+        val unlinked = repository.settings.first { it.activeProfileId == null }
+        assertEquals(
+            setOf("com.instagram.android", "com.reddit.frontpage"),
+            unlinked.monitoredPackages,
+        )
+    }
+
+    @Test
+    fun `updating active profile syncs top-level and deleting active profile preserves monitoring`() =
+        runTest {
+            val (_, repository) = createRepository()
+            val weekend = PauseProfile.weekendPreset(monitoredPackages = setOf("com.app.a"))
+            repository.saveProfile(weekend, activate = true)
+            repository.settings.first { it.activeProfileId == "weekend" }
+
+            // Saving an updated version of the active profile syncs top-level immediately.
+            repository.saveProfile(
+                weekend.copy(
+                    monitoredPackages = setOf("com.app.b"),
+                    defaultFrictionModes = listOf(FrictionMode.INTENTION),
+                    scheduleEnabled = false,
+                ),
+                activate = false,
+            )
+            val updated = repository.settings.first {
+                it.monitoredPackages == setOf("com.app.b") && !it.scheduleEnabled
+            }
+            assertEquals("weekend", updated.activeProfileId)
+            assertEquals(listOf(FrictionMode.INTENTION), updated.defaultFrictionModes)
+
+            // Deleting the active profile clears activeProfileId without wiping top-level apps.
+            repository.deleteProfile("weekend")
+            val afterDelete = repository.settings.first { it.profiles.isEmpty() }
+            assertNull(afterDelete.activeProfileId)
+            assertEquals(setOf("com.app.b"), afterDelete.monitoredPackages)
+
+            repository.setAutoSwitchProfiles(true)
+            val autoOn = repository.settings.first { it.autoSwitchProfiles }
+            assertTrue(autoOn.autoSwitchProfiles)
+        }
+
+    @Test
+    fun `active profile syncs toggleMonitored, toggleDefaultFrictionMode, and setScheduleEnabled`() =
+        runTest {
+            val (_, repository) = createRepository()
+            repository.saveProfile(
+                PauseProfile(
+                    id = "focus",
+                    name = "Focus",
+                    monitoredPackages = emptySet(),
+                    defaultFrictionModes = listOf(FrictionMode.BREATHING),
+                    scheduleEnabled = false,
+                ),
+                activate = true,
+            )
+            repository.settings.first { it.activeProfileId == "focus" }
+
+            assertTrue(repository.toggleMonitored("com.example"))
+            repository.toggleDefaultFrictionMode(FrictionMode.TIME_LIMIT)
+            repository.setScheduleEnabled(true)
+
+            val synced = repository.settings.first {
+                val p = it.activeProfile
+                p != null &&
+                    "com.example" in p.monitoredPackages &&
+                    p.defaultFrictionModes == listOf(FrictionMode.BREATHING, FrictionMode.TIME_LIMIT) &&
+                    p.scheduleEnabled
+            }
+            assertEquals(setOf("com.example"), synced.activeProfile?.monitoredPackages)
+        }
+
+    @Test
+    fun `strict mode preferences persist and enforce bounds`() = runTest {
+        val (_, repository) = createRepository()
+        repository.setStrictModeEnabled(true)
+        repository.setStrictModeChallenge(StrictModeChallenge.PHRASE)
+        repository.setStrictModeDelaySeconds(45)
+        repository.setStrictModeDelaySeconds(4) // out of bounds -> ignored
+        repository.setStrictModeDelaySeconds(301) // out of bounds -> ignored
+
+        val longPhrase = "  " + "a".repeat(PauseSettings.MAX_STRICT_MODE_PHRASE_LENGTH + 20) + "  "
+        repository.setStrictModePhrase(longPhrase)
+
+        val saved = repository.settings.first {
+            it.strictModeEnabled &&
+                it.strictModeChallenge == StrictModeChallenge.PHRASE &&
+                it.strictModeDelaySeconds == 45 &&
+                it.strictModePhrase.length == PauseSettings.MAX_STRICT_MODE_PHRASE_LENGTH
+        }
+        assertTrue(saved.strictModeEnabled)
+        assertEquals(StrictModeChallenge.PHRASE, saved.strictModeChallenge)
+        assertEquals(45, saved.strictModeDelaySeconds)
+        assertEquals("a".repeat(PauseSettings.MAX_STRICT_MODE_PHRASE_LENGTH), saved.strictModePhrase)
+    }
 
     private class MutableClock(
         private var currentMillis: Long,

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="strict_mode_challenge_title">Strict mode check</string>
+    <string name="strict_mode_challenge_reassurance">Strict mode adds a brief check before changing your protections. Nothing is locked permanently—you can complete this step or cancel anytime.</string>
+    <string name="strict_mode_delay_remaining">Waiting %1$d s before confirming…</string>
+    <string name="strict_mode_delay_ready">Ready. You can confirm now.</string>
+    <string name="strict_mode_phrase_instruction">Type this phrase to confirm:</string>
+    <string name="strict_mode_phrase_label">Confirmation phrase</string>
+    <string name="strict_mode_phrase_placeholder">Type the phrase above</string>
+    <string name="strict_mode_phrase_matched">Phrase matched.</string>
+    <string name="strict_mode_challenge_confirm">Confirm</string>
+    <string name="strict_mode_challenge_cancel">Cancel</string>
+</resources>

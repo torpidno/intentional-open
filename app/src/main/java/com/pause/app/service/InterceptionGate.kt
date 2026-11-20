@@ -34,6 +34,9 @@ enum class InterceptionDecision {
 
     /** The global active-hours schedule is outside its configured window. */
     OUTSIDE_SCHEDULE,
+
+    /** The app has reached or exceeded its daily usage limit. */
+    DAILY_LIMIT_EXCEEDED,
 }
 
 /**
@@ -59,6 +62,8 @@ class InterceptionGate @Inject constructor(
 
     private var lastHandledPackage: String? = null
     private var lastHandledAtElapsedMillis: Long = 0L
+    private var lastBudgetBlockedPackage: String? = null
+    private var lastBudgetBlockedAtElapsedMillis: Long = 0L
 
     fun decide(
         packageName: String,
@@ -66,14 +71,20 @@ class InterceptionGate @Inject constructor(
         ignoredPackages: Set<String>,
         isDeviceInteractive: Boolean,
         isDeviceLocked: Boolean,
+        isDailyLimitExceeded: Boolean = false,
     ): InterceptionDecision {
         if (packageName in ignoredPackages) return InterceptionDecision.IGNORED_PACKAGE
         if (!settings.isEnabled) return InterceptionDecision.DISABLED
-        if (!settings.isMonitored(packageName)) return InterceptionDecision.NOT_MONITORED
-        if (settings.isSnoozed(packageName, clock.millis())) {
+
+        val nowInstant = clock.instant()
+        val nowZdt = nowInstant.atZone(clock.zone)
+        val effective = settings.effectiveAt(nowZdt)
+
+        if (!effective.isMonitored(packageName)) return InterceptionDecision.NOT_MONITORED
+        if (effective.isSnoozed(packageName, nowInstant.toEpochMilli())) {
             return InterceptionDecision.SNOOZED
         }
-        if (!settings.isScheduleActive(clock.instant().atZone(clock.zone))) {
+        if (!effective.isScheduleActive(nowZdt)) {
             return InterceptionDecision.OUTSIDE_SCHEDULE
         }
         if (!isDeviceInteractive || isDeviceLocked) return InterceptionDecision.DEVICE_UNAVAILABLE
@@ -84,6 +95,22 @@ class InterceptionGate @Inject constructor(
         ) {
             return InterceptionDecision.DUPLICATE_EVENT
         }
+
+        if (isDailyLimitExceeded) {
+            // Normal grace periods never bypass an exhausted daily budget, but a
+            // short per-package launch guard still absorbs splash bursts.
+            if (packageName == lastBudgetBlockedPackage &&
+                now - lastBudgetBlockedAtElapsedMillis < LAUNCH_GUARD_MS
+            ) {
+                return InterceptionDecision.DUPLICATE_EVENT
+            }
+            lastHandledPackage = packageName
+            lastHandledAtElapsedMillis = now
+            lastBudgetBlockedPackage = packageName
+            lastBudgetBlockedAtElapsedMillis = now
+            return InterceptionDecision.DAILY_LIMIT_EXCEEDED
+        }
+
         if (cooldownTracker.isCoolingDown(packageName)) {
             return InterceptionDecision.COOLING_DOWN
         }
@@ -100,6 +127,10 @@ class InterceptionGate @Inject constructor(
      */
     fun onLaunchFailed(packageName: String) {
         cooldownTracker.clear(packageName)
+        if (lastBudgetBlockedPackage == packageName) {
+            lastBudgetBlockedPackage = null
+            lastBudgetBlockedAtElapsedMillis = 0L
+        }
     }
 
     companion object {

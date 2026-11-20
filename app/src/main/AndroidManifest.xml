@@ -21,6 +21,11 @@
     <!-- Re-arm an active session reminder after a reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Optional: reads local daily foreground app time for daily app budgets. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
     <!--
         Package visibility for the app picker + the launcher detection used by
         the accessibility service. This is the narrow, Play-policy friendly way

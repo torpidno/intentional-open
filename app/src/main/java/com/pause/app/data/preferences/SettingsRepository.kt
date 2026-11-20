@@ -11,6 +11,10 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.pause.app.di.ApplicationScope
 import com.pause.app.domain.model.FrictionMode
+import com.pause.app.domain.model.PauseProfile
+import com.pause.app.domain.model.StrictModeChallenge
+import com.pause.app.domain.model.decodeProfiles
+import com.pause.app.domain.model.encodeProfiles
 import com.pause.app.domain.model.moveFrictionMode
 import java.io.IOException
 import java.time.Clock
@@ -67,7 +71,10 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun setScheduleEnabled(enabled: Boolean) {
-        dataStore.edit { it[Keys.SCHEDULE_ENABLED] = enabled }
+        dataStore.edit { preferences ->
+            preferences[Keys.SCHEDULE_ENABLED] = enabled
+            preferences.syncActiveProfileFromTopLevel()
+        }
     }
 
     /** Sets an inclusive start and exclusive end, in minutes since midnight. */
@@ -77,6 +84,7 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { preferences ->
             preferences[Keys.SCHEDULE_START_MINUTES] = startMinutes
             preferences[Keys.SCHEDULE_END_MINUTES] = endMinutes
+            preferences.syncActiveProfileFromTopLevel()
         }
     }
 
@@ -91,6 +99,7 @@ class SettingsRepository @Inject constructor(
                 days += day
             }
             preferences[Keys.SCHEDULE_DAYS] = days.map { it.name }.toSet()
+            preferences.syncActiveProfileFromTopLevel()
         }
     }
 
@@ -146,6 +155,109 @@ class SettingsRepository @Inject constructor(
             .first()[Keys.HISTORY_RETENTION_DAYS]
             ?: PauseSettings.DEFAULT_HISTORY_RETENTION_DAYS
 
+    /** Sets an optional daily usage budget in minutes, or removes it when null or <= 0. */
+    suspend fun setDailyLimitMinutes(packageName: String, minutes: Int?) {
+        if (packageName.isBlank()) return
+        dataStore.edit { preferences ->
+            val limits = decodeDailyLimits(preferences[Keys.DAILY_LIMITS_MINUTES].orEmpty())
+                .toMutableMap()
+            if (minutes == null || minutes <= 0) {
+                limits.remove(packageName)
+            } else {
+                limits[packageName] = minutes
+            }
+            preferences[Keys.DAILY_LIMITS_MINUTES] = encodeDailyLimits(limits)
+        }
+    }
+
+    /**
+     * Upserts [profile] by [PauseProfile.id], ignoring blank ids or names.
+     * When [activate] is true or [profile] is already active, top-level keys are
+     * atomically synced from [profile] in the same DataStore edit.
+     */
+    suspend fun saveProfile(profile: PauseProfile, activate: Boolean = false) {
+        val normalized = profile.normalized() ?: return
+        dataStore.edit { preferences ->
+            val currentActiveId = preferences[Keys.ACTIVE_PROFILE_ID]?.takeIf { it.isNotBlank() }
+            if (activate && currentActiveId != null && currentActiveId != normalized.id) {
+                preferences.syncActiveProfileFromTopLevel()
+            }
+            val profiles = decodeProfiles(preferences[Keys.PROFILES_JSON].orEmpty()).toMutableList()
+            val existingIndex = profiles.indexOfFirst { it.id == normalized.id }
+            if (existingIndex >= 0) {
+                profiles[existingIndex] = normalized
+            } else {
+                profiles += normalized
+            }
+            preferences[Keys.PROFILES_JSON] = encodeProfiles(profiles)
+            if (activate || currentActiveId == normalized.id) {
+                preferences.applyProfileToTopLevel(normalized)
+                preferences[Keys.ACTIVE_PROFILE_ID] = normalized.id
+            }
+        }
+    }
+
+    /**
+     * Atomically snapshots current top-level settings into the currently active
+     * profile (if any), then switches to [profileId] (or unlinks when null).
+     */
+    suspend fun selectProfile(profileId: String?) {
+        dataStore.edit { preferences ->
+            preferences.syncActiveProfileFromTopLevel()
+            if (profileId.isNullOrBlank()) {
+                preferences.remove(Keys.ACTIVE_PROFILE_ID)
+                return@edit
+            }
+            val target = decodeProfiles(preferences[Keys.PROFILES_JSON].orEmpty())
+                .firstOrNull { it.id == profileId }
+                ?: return@edit
+            preferences.applyProfileToTopLevel(target)
+            preferences[Keys.ACTIVE_PROFILE_ID] = target.id
+        }
+    }
+
+    /**
+     * Removes the profile with [profileId]. If it was active, [Keys.ACTIVE_PROFILE_ID]
+     * is cleared while keeping the user's current top-level settings intact.
+     */
+    suspend fun deleteProfile(profileId: String) {
+        if (profileId.isBlank()) return
+        dataStore.edit { preferences ->
+            val profiles = decodeProfiles(preferences[Keys.PROFILES_JSON].orEmpty())
+            val remaining = profiles.filterNot { it.id == profileId }
+            if (remaining.size != profiles.size) {
+                preferences[Keys.PROFILES_JSON] = encodeProfiles(remaining)
+            }
+            if (preferences[Keys.ACTIVE_PROFILE_ID] == profileId) {
+                preferences.remove(Keys.ACTIVE_PROFILE_ID)
+            }
+        }
+    }
+
+    suspend fun setAutoSwitchProfiles(enabled: Boolean) {
+        dataStore.edit { it[Keys.AUTO_SWITCH_PROFILES] = enabled }
+    }
+
+    suspend fun setStrictModeEnabled(enabled: Boolean) {
+        dataStore.edit { it[Keys.STRICT_MODE_ENABLED] = enabled }
+    }
+
+    suspend fun setStrictModeChallenge(challenge: StrictModeChallenge) {
+        dataStore.edit { it[Keys.STRICT_MODE_CHALLENGE] = challenge.name }
+    }
+
+    suspend fun setStrictModeDelaySeconds(seconds: Int) {
+        if (seconds !in PauseSettings.MIN_STRICT_MODE_DELAY_SECONDS..PauseSettings.MAX_STRICT_MODE_DELAY_SECONDS) {
+            return
+        }
+        dataStore.edit { it[Keys.STRICT_MODE_DELAY_SECONDS] = seconds }
+    }
+
+    suspend fun setStrictModePhrase(phrase: String) {
+        val normalized = phrase.trim().take(PauseSettings.MAX_STRICT_MODE_PHRASE_LENGTH)
+        dataStore.edit { it[Keys.STRICT_MODE_PHRASE] = normalized }
+    }
+
     /** Compatibility helper for a single-mode default; used by tests/imports. */
     suspend fun setDefaultFrictionMode(mode: FrictionMode) {
         setDefaultFrictionModes(listOf(mode))
@@ -156,6 +268,7 @@ class SettingsRepository @Inject constructor(
         if (normalized.isEmpty()) return
         dataStore.edit { preferences ->
             preferences.writeDefaultFrictionModes(normalized)
+            preferences.syncActiveProfileFromTopLevel()
         }
     }
 
@@ -166,6 +279,7 @@ class SettingsRepository @Inject constructor(
             val next = if (mode in current) current - mode else current + mode
             if (next.isEmpty()) return@edit
             preferences.writeDefaultFrictionModes(normalizeFrictionModes(next))
+            preferences.syncActiveProfileFromTopLevel()
         }
     }
 
@@ -176,6 +290,7 @@ class SettingsRepository @Inject constructor(
             val moved = current.moveFrictionMode(mode, offset)
             if (moved != current) {
                 preferences.writeDefaultFrictionModes(moved)
+                preferences.syncActiveProfileFromTopLevel()
             }
         }
     }
@@ -196,6 +311,7 @@ class SettingsRepository @Inject constructor(
             }
             preferences[Keys.MONITORED_PACKAGES] = monitoredPackages
             preferences[Keys.PAUSED_PACKAGES] = pausedPackages
+            preferences.syncActiveProfileFromTopLevel()
         }
     }
 
@@ -219,6 +335,7 @@ class SettingsRepository @Inject constructor(
             pausedPackages -= packageName
             preferences[Keys.MONITORED_PACKAGES] = monitoredPackages
             preferences[Keys.PAUSED_PACKAGES] = pausedPackages
+            preferences.syncActiveProfileFromTopLevel()
         }
         return nowMonitored
     }
@@ -230,6 +347,7 @@ class SettingsRepository @Inject constructor(
             val pausedPackages = preferences[Keys.PAUSED_PACKAGES].orEmpty().toMutableSet()
             if (paused) pausedPackages += packageName else pausedPackages -= packageName
             preferences[Keys.PAUSED_PACKAGES] = pausedPackages
+            preferences.syncActiveProfileFromTopLevel()
         }
     }
 
@@ -254,6 +372,7 @@ class SettingsRepository @Inject constructor(
                 overrides[packageName] = normalized
             }
             preferences[Keys.APP_MODE_OVERRIDES] = encodeOverrides(overrides)
+            preferences.syncActiveProfileFromTopLevel()
         }
     }
 
@@ -264,6 +383,73 @@ class SettingsRepository @Inject constructor(
         if (updated != existing) {
             this[Keys.SNOOZED_UNTIL] = encodeSnoozes(updated)
         }
+    }
+}
+
+private fun PauseProfile.normalized(): PauseProfile? {
+    val cleanId = id.trim()
+    val cleanName = name.trim()
+    if (cleanId.isEmpty() || cleanName.isEmpty()) return null
+    val cleanMonitored = monitoredPackages.filter { it.isNotBlank() }.toSet()
+    val cleanPaused = pausedPackages.filter { it.isNotBlank() }.toSet()
+    val cleanModes = normalizeFrictionModes(defaultFrictionModes)
+        .ifEmpty { listOf(FrictionMode.BREATHING) }
+    val cleanOverrides = appModeOverrides.entries
+        .mapNotNull { (pkg, modes) ->
+            val cleanPkg = pkg.trim()
+            val normalizedModes = normalizeFrictionModes(modes)
+            if (cleanPkg.isEmpty() || normalizedModes.isEmpty()) null else cleanPkg to normalizedModes
+        }
+        .toMap()
+    return copy(
+        id = cleanId,
+        name = cleanName,
+        monitoredPackages = cleanMonitored,
+        pausedPackages = cleanPaused,
+        defaultFrictionModes = cleanModes,
+        appModeOverrides = cleanOverrides,
+        scheduleStartMinutes = scheduleStartMinutes.coerceIn(0, PauseSettings.MINUTES_PER_DAY - 1),
+        scheduleEndMinutes = scheduleEndMinutes.coerceIn(0, PauseSettings.MINUTES_PER_DAY - 1),
+    )
+}
+
+private fun MutablePreferences.applyProfileToTopLevel(profile: PauseProfile) {
+    val modes = normalizeFrictionModes(profile.defaultFrictionModes)
+        .ifEmpty { listOf(FrictionMode.BREATHING) }
+    this[Keys.MONITORED_PACKAGES] = profile.monitoredPackages
+    this[Keys.PAUSED_PACKAGES] = profile.pausedPackages
+    writeDefaultFrictionModes(modes)
+    this[Keys.APP_MODE_OVERRIDES] = encodeOverrides(profile.appModeOverrides)
+    this[Keys.SCHEDULE_ENABLED] = profile.scheduleEnabled
+    this[Keys.SCHEDULE_DAYS] = profile.scheduleDays.map { it.name }.toSet()
+    this[Keys.SCHEDULE_START_MINUTES] =
+        profile.scheduleStartMinutes.coerceIn(0, PauseSettings.MINUTES_PER_DAY - 1)
+    this[Keys.SCHEDULE_END_MINUTES] =
+        profile.scheduleEndMinutes.coerceIn(0, PauseSettings.MINUTES_PER_DAY - 1)
+}
+
+private fun MutablePreferences.syncActiveProfileFromTopLevel() {
+    val activeId = this[Keys.ACTIVE_PROFILE_ID]?.takeIf { it.isNotBlank() } ?: return
+    val profiles = decodeProfiles(this[Keys.PROFILES_JSON].orEmpty())
+    val index = profiles.indexOfFirst { it.id == activeId }
+    if (index < 0) return
+    val existing = profiles[index]
+    val updated = existing.copy(
+        monitoredPackages = this[Keys.MONITORED_PACKAGES].orEmpty(),
+        pausedPackages = this[Keys.PAUSED_PACKAGES].orEmpty(),
+        defaultFrictionModes = defaultFrictionModes(),
+        appModeOverrides = decodeOverrides(this[Keys.APP_MODE_OVERRIDES].orEmpty()),
+        scheduleEnabled = this[Keys.SCHEDULE_ENABLED] ?: false,
+        scheduleDays = scheduleDays(),
+        scheduleStartMinutes = this[Keys.SCHEDULE_START_MINUTES]
+            ?: PauseSettings.DEFAULT_SCHEDULE_START_MINUTES,
+        scheduleEndMinutes = this[Keys.SCHEDULE_END_MINUTES]
+            ?: PauseSettings.DEFAULT_SCHEDULE_END_MINUTES,
+    )
+    if (updated != existing) {
+        val mutable = profiles.toMutableList()
+        mutable[index] = updated
+        this[Keys.PROFILES_JSON] = encodeProfiles(mutable)
     }
 }
 
@@ -292,6 +478,25 @@ internal fun decodeOverrides(raw: String): Map<String, List<FrictionMode>> =
             val modes = decodeFrictionSequence(parts[1])
             if (modes.isEmpty()) return@mapNotNull null
             parts[0] to modes
+        }
+        .toMap()
+
+internal fun encodeDailyLimits(limits: Map<String, Int>): String =
+    limits.entries
+        .filter { it.key.isNotBlank() && it.value > 0 }
+        .sortedBy { it.key }
+        .joinToString(ENTRY_SEPARATOR) { (packageName, minutes) ->
+            "$packageName$VALUE_SEPARATOR$minutes"
+        }
+
+internal fun decodeDailyLimits(raw: String): Map<String, Int> =
+    raw.split(ENTRY_SEPARATOR)
+        .mapNotNull { entry ->
+            val parts = entry.split(VALUE_SEPARATOR, limit = 2)
+            if (parts.size != 2 || parts[0].isBlank()) return@mapNotNull null
+            val minutes = parts[1].toIntOrNull() ?: return@mapNotNull null
+            if (minutes <= 0) return@mapNotNull null
+            parts[0] to minutes
         }
         .toMap()
 
@@ -370,8 +575,16 @@ private fun Preferences.scheduleDays(): Set<DayOfWeek> {
     return stored.ifEmpty { DayOfWeek.entries.toSet() }
 }
 
-private fun Preferences.toPauseSettings(): PauseSettings =
-    PauseSettings(
+private fun Preferences.strictModeChallenge(): StrictModeChallenge =
+    this[Keys.STRICT_MODE_CHALLENGE]
+        ?.let { runCatching { StrictModeChallenge.valueOf(it) }.getOrNull() }
+        ?: StrictModeChallenge.DELAY
+
+private fun Preferences.toPauseSettings(): PauseSettings {
+    val profiles = decodeProfiles(this[Keys.PROFILES_JSON].orEmpty())
+    val activeProfileId = this[Keys.ACTIVE_PROFILE_ID]
+        ?.takeIf { id -> id.isNotBlank() && profiles.any { it.id == id } }
+    return PauseSettings(
         isEnabled = this[Keys.ENABLED] ?: true,
         cooldownMinutes = this[Keys.COOLDOWN_MINUTES]
             ?: PauseSettings.DEFAULT_COOLDOWN_MINUTES,
@@ -390,7 +603,22 @@ private fun Preferences.toPauseSettings(): PauseSettings =
         snoozedUntilMillis = snoozedUntilMillis(),
         historyRetentionDays = this[Keys.HISTORY_RETENTION_DAYS]
             ?: PauseSettings.DEFAULT_HISTORY_RETENTION_DAYS,
+        dailyLimitsMinutes = decodeDailyLimits(this[Keys.DAILY_LIMITS_MINUTES].orEmpty()),
+        profiles = profiles,
+        activeProfileId = activeProfileId,
+        autoSwitchProfiles = this[Keys.AUTO_SWITCH_PROFILES] ?: false,
+        strictModeEnabled = this[Keys.STRICT_MODE_ENABLED] ?: false,
+        strictModeChallenge = strictModeChallenge(),
+        strictModeDelaySeconds = (this[Keys.STRICT_MODE_DELAY_SECONDS]
+            ?: PauseSettings.DEFAULT_STRICT_MODE_DELAY_SECONDS)
+            .coerceIn(
+                PauseSettings.MIN_STRICT_MODE_DELAY_SECONDS,
+                PauseSettings.MAX_STRICT_MODE_DELAY_SECONDS,
+            ),
+        strictModePhrase = this[Keys.STRICT_MODE_PHRASE]
+            ?: PauseSettings.DEFAULT_STRICT_MODE_PHRASE,
     )
+}
 
 /**
  * DataStore keys shared by the repository and the read-only snapshot mapper.
@@ -412,4 +640,12 @@ private object Keys {
     val SCHEDULE_END_MINUTES = intPreferencesKey("schedule_end_minutes")
     val SNOOZED_UNTIL = stringPreferencesKey("snoozed_until")
     val HISTORY_RETENTION_DAYS = intPreferencesKey("history_retention_days")
+    val DAILY_LIMITS_MINUTES = stringPreferencesKey("daily_limits_minutes")
+    val PROFILES_JSON = stringPreferencesKey("profiles_json")
+    val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
+    val AUTO_SWITCH_PROFILES = booleanPreferencesKey("auto_switch_profiles")
+    val STRICT_MODE_ENABLED = booleanPreferencesKey("strict_mode_enabled")
+    val STRICT_MODE_CHALLENGE = stringPreferencesKey("strict_mode_challenge")
+    val STRICT_MODE_DELAY_SECONDS = intPreferencesKey("strict_mode_delay_seconds")
+    val STRICT_MODE_PHRASE = stringPreferencesKey("strict_mode_phrase")
 }
