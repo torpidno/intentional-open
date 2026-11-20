@@ -77,6 +77,8 @@ import com.pause.app.ui.theme.PauseDimens
 import com.pause.app.util.PermissionSnapshot
 import com.pause.app.util.PermissionType
 import java.time.DayOfWeek
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -492,6 +494,11 @@ private fun SchedulePreferenceCard(
     onEndChange: (Int) -> Unit,
     onDayToggle: (DayOfWeek) -> Unit,
 ) {
+    val context = LocalContext.current
+    var is24Hour by remember(context) { mutableStateOf(DateFormat.is24HourFormat(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        is24Hour = DateFormat.is24HourFormat(context)
+    }
     var editing by remember { mutableStateOf<ScheduleTimeField?>(null) }
 
     PreferenceCard(
@@ -512,12 +519,15 @@ private fun SchedulePreferenceCard(
 
         if (settings.scheduleEnabled) {
             Spacer(Modifier.height(PauseDimens.space16))
-            Row(horizontalArrangement = Arrangement.spacedBy(PauseDimens.space8)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+                verticalArrangement = Arrangement.spacedBy(PauseDimens.space8),
+            ) {
                 OutlinedButton(onClick = { editing = ScheduleTimeField.START }) {
                     Text(
                         text = stringResource(
                             R.string.settings_schedule_start,
-                            formatScheduleMinutes(settings.scheduleStartMinutes),
+                            formatScheduleMinutes(settings.scheduleStartMinutes, is24Hour),
                         ),
                     )
                 }
@@ -525,7 +535,7 @@ private fun SchedulePreferenceCard(
                     Text(
                         text = stringResource(
                             R.string.settings_schedule_end,
-                            formatScheduleMinutes(settings.scheduleEndMinutes),
+                            formatScheduleMinutes(settings.scheduleEndMinutes, is24Hour),
                         ),
                     )
                 }
@@ -561,7 +571,7 @@ private fun SchedulePreferenceCard(
     }
 
     editing?.let { field ->
-        key(field) {
+        key(field, is24Hour) {
             val isStart = field == ScheduleTimeField.START
             ScheduleTimeDialog(
                 title = stringResource(
@@ -573,6 +583,7 @@ private fun SchedulePreferenceCard(
                 } else {
                     settings.scheduleEndMinutes
                 },
+                is24Hour = is24Hour,
                 onDismiss = { editing = null },
                 onConfirm = { minutes ->
                     if (isStart) onStartChange(minutes) else onEndChange(minutes)
@@ -588,14 +599,14 @@ private fun SchedulePreferenceCard(
 private fun ScheduleTimeDialog(
     title: String,
     initialMinutes: Int,
+    is24Hour: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit,
 ) {
-    val context = LocalContext.current
     val state = rememberTimePickerState(
         initialHour = initialMinutes / 60,
         initialMinute = initialMinutes % 60,
-        is24Hour = DateFormat.is24HourFormat(context),
+        is24Hour = is24Hour,
     )
 
     AlertDialog(
@@ -615,9 +626,15 @@ private fun ScheduleTimeDialog(
     )
 }
 
-private fun formatScheduleMinutes(minutes: Int): String {
+private fun formatScheduleMinutes(
+    minutes: Int,
+    is24Hour: Boolean,
+    locale: Locale = Locale.getDefault(),
+): String {
     val normalized = minutes.coerceIn(0, PauseSettings.MINUTES_PER_DAY - 1)
-    return String.format(Locale.getDefault(), "%02d:%02d", normalized / 60, normalized % 60)
+    val time = LocalTime.of(normalized / 60, normalized % 60)
+    val pattern = if (is24Hour) "HH:mm" else "h:mm a"
+    return time.format(DateTimeFormatter.ofPattern(pattern, locale))
 }
 
 private fun DayOfWeek.labelRes(): Int = when (this) {

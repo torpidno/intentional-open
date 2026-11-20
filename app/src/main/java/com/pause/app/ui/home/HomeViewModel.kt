@@ -10,11 +10,15 @@ import com.pause.app.domain.model.FrictionMode
 import com.pause.app.util.PermissionChecker
 import com.pause.app.util.PermissionSnapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.Clock
+import java.time.LocalDate
 import javax.inject.Inject
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -44,22 +48,26 @@ data class HomeUiState(
  * are combined into one immutable [HomeUiState]; every user action is a method
  * that writes to the repositories and lets the flows re-emit.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     interceptionRepository: InterceptionRepository,
     private val installedAppsRepository: InstalledAppsRepository,
     private val permissionChecker: PermissionChecker,
+    private val clock: Clock,
 ) : ViewModel() {
 
     private val permissions = MutableStateFlow(permissionChecker.snapshot())
+    private val currentDay = MutableStateFlow(LocalDate.now(clock))
 
     val uiState: StateFlow<HomeUiState> = combine(
         settingsRepository.settings,
-        interceptionRepository.observeTodayStats(),
+        currentDay.flatMapLatest { interceptionRepository.observeTodayStats() },
         installedAppsRepository.apps,
         permissions,
     ) { settings, stats, installedApps, permissionSnapshot ->
+        val nowMillis = clock.millis()
         val installedByPackage = installedApps.associateBy { it.packageName }
         val catalogLoaded = installedApps.isNotEmpty()
 
@@ -77,7 +85,7 @@ class HomeViewModel @Inject constructor(
                     isPaused = packageName in settings.pausedPackages,
                     modeOverride = settings.appModeOverrides[packageName],
                     snoozedUntilMillis = settings.snoozedUntilMillis[packageName]
-                        ?.takeIf { it > System.currentTimeMillis() },
+                        ?.takeIf { it > nowMillis },
                 )
             }
             .sortedBy { it.label.lowercase() }
@@ -102,9 +110,20 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { runCatching { installedAppsRepository.refresh() } }
     }
 
+    /** Re-reads permissions and refreshes the active day; call whenever the screen resumes. */
+    fun onResume() {
+        refreshPermissions()
+        refreshDay()
+    }
+
     /** Re-reads permission state; call whenever the screen resumes. */
     fun refreshPermissions() {
         permissions.value = permissionChecker.snapshot()
+    }
+
+    /** Updates the observed local day so Today's stats roll over after midnight. */
+    fun refreshDay() {
+        currentDay.value = LocalDate.now(clock)
     }
 
     fun setEnabled(enabled: Boolean) {

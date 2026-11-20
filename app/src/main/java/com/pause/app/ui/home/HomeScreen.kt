@@ -92,8 +92,9 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // Permission state can change while Settings is open in front of us.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermissions() }
+    // Permission state can change while Settings is open, and Today's stats
+    // should roll over if the app stayed alive across midnight.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onResume() }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

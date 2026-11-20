@@ -1,9 +1,11 @@
 package com.pause.app.ui.history
 
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pause.app.data.export.HistoryCsv
 import com.pause.app.data.repository.HistoryRetentionManager
+import com.pause.app.data.repository.InstalledAppsRepository
 import com.pause.app.data.repository.InterceptionRepository
 import com.pause.app.domain.model.FrictionMode
 import com.pause.app.domain.model.InterventionOutcome
@@ -36,6 +38,7 @@ data class HistoryEntryUi(
     val frictionModes: List<FrictionMode>,
     val intention: String?,
     val sessionLimitMinutes: Int?,
+    val appIcon: ImageBitmap? = null,
 )
 
 data class HistoryUiState(
@@ -48,6 +51,7 @@ data class HistoryUiState(
 class HistoryViewModel @Inject constructor(
     private val interceptionRepository: InterceptionRepository,
     private val historyRetentionManager: HistoryRetentionManager,
+    private val installedAppsRepository: InstalledAppsRepository,
     clock: Clock,
 ) : ViewModel() {
 
@@ -58,7 +62,9 @@ class HistoryViewModel @Inject constructor(
     val uiState: StateFlow<HistoryUiState> = combine(
         interceptionRepository.observeHistory(),
         filter,
-    ) { records, selectedFilter ->
+        installedAppsRepository.apps,
+    ) { records, selectedFilter, installedApps ->
+        val iconsByPackage = installedApps.associate { it.packageName to it.icon }
         val visible = records.filter { record ->
             when (selectedFilter) {
                 HistoryFilter.ALL -> true
@@ -72,6 +78,7 @@ class HistoryViewModel @Inject constructor(
                     dateFormatter = dateFormatter,
                     timeFormatter = timeFormatter,
                     clock = clock,
+                    appIcon = iconsByPackage[record.packageName],
                 )
             },
             filter = selectedFilter,
@@ -87,6 +94,11 @@ class HistoryViewModel @Inject constructor(
         // Pruning here also covers users who never leave the app open at boot.
         viewModelScope.launch {
             runCatching { historyRetentionManager.pruneNow() }
+        }
+        viewModelScope.launch {
+            if (installedAppsRepository.apps.value.isEmpty()) {
+                runCatching { installedAppsRepository.refresh() }
+            }
         }
     }
 
@@ -108,6 +120,7 @@ private fun InterventionRecord.toUi(
     dateFormatter: DateTimeFormatter,
     timeFormatter: DateTimeFormatter,
     clock: Clock,
+    appIcon: ImageBitmap?,
 ): HistoryEntryUi {
     val timestamp = Instant.ofEpochMilli(timestampMillis)
         .atZone(clock.zone)
@@ -120,5 +133,6 @@ private fun InterventionRecord.toUi(
         frictionModes = frictionModes,
         intention = intention,
         sessionLimitMinutes = sessionLimitMinutes,
+        appIcon = appIcon,
     )
 }

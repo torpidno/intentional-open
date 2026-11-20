@@ -282,7 +282,7 @@ private fun HistoryCard(entry: HistoryEntryUi) {
     PauseCard(contentPadding = PaddingValues(PauseDimens.space16)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AppGlyph(
-                icon = null,
+                icon = entry.appIcon,
                 label = entry.appLabel,
                 modifier = Modifier.size(36.dp),
                 cornerRadius = 10.dp,
